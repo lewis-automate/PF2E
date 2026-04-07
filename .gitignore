@@ -1,0 +1,19 @@
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local / accidental exports (optional: remove line if you want to track JSON backups)
+*.local.json
+*-export.json
+
+# Logs
+*.log
+npm-debug.log*

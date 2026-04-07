@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PF2E Relic Sheet</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="header-left tabs" aria-label="Main tabs">
+        <button class="tab-btn active" data-tab="overview" type="button">Overview</button>
+        <button class="tab-btn" data-tab="base" type="button">Stats</button>
+      </div>
+      <h1 id="character-header-name">Character</h1>
+      <div class="top-actions">
+        <button id="overview-edit-btn" type="button">Edit Layout</button>
+        <button id="characters-btn" type="button">Characters</button>
+        <button id="import-btn" type="button">Import</button>
+        <button id="new-character-btn" type="button">New Character</button>
+        <button id="export-btn" type="button">Export</button>
+      </div>
+    </header>
+
+    <main id="app-root">
+      <section class="tab-panel active" id="tab-overview">
+        <div id="overview-workspace"></div>
+      </section>
+
+      <section class="tab-panel" id="tab-base">
+        <div class="card">
+          <h2>Stats</h2>
+          <div id="base-panel"></div>
+        </div>
+      </section>
+
+    </main>
+
+    <button id="roll-log-toggle" class="roll-log-toggle" type="button">Roll Log</button>
+    <aside id="roll-log-popup" class="roll-log-popup" aria-hidden="true">
+      <div class="roll-log-head">
+        <h2>Roll Log</h2>
+        <button id="roll-log-close" type="button">Close</button>
+      </div>
+      <div id="roll-log"></div>
+    </aside>
+    <aside id="characters-popup" class="roll-log-popup characters-popup" aria-hidden="true">
+      <div class="roll-log-head">
+        <h2>Characters</h2>
+        <button id="characters-close" type="button">Close</button>
+      </div>
+      <div id="characters-list"></div>
+    </aside>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
