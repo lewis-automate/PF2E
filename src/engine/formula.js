@@ -17,7 +17,7 @@ export function evaluateExpression(expression, resolveVar) {
     }
     return String(value);
   });
-  replaced = replaced.replace(/\$([a-zA-Z_][a-zA-Z0-9_]*)/g, (_, varName) => {
+  replaced = replaced.replace(/[$@]([a-zA-Z_][a-zA-Z0-9_-]*)/g, (_, varName) => {
     const value = resolveVar(varName);
     if (!Number.isFinite(value)) {
       throw new Error(`Unknown or invalid variable: ${varName}`);
@@ -29,6 +29,13 @@ export function evaluateExpression(expression, resolveVar) {
     throw new Error("Expression contains unsupported characters.");
   }
   return replaced;
+}
+
+export function expandTemplate(text, resolveVar) {
+  return String(text || "").replace(/[$@]([a-zA-Z_][a-zA-Z0-9_-]*)/g, (full, varName) => {
+    const value = resolveVar(varName);
+    return value == null ? full : String(value);
+  });
 }
 
 export function executeFormula(formula, resolveVar) {

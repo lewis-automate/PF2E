@@ -51,10 +51,12 @@ function createInitialState() {
         "modifier-widget": {
           title: "Modifier Widget",
           rows: [],
+          library: [],
         },
       },
       toggles: {
         raiseShield: false,
+        raiseShieldBonus: 1,
       },
       health: {
         ancestryBase: 8,
@@ -104,10 +106,17 @@ function createInitialState() {
       modifierWidgetEditorOpen: false,
       modifierWidgetEditingId: null,
       modifierWidgetGroupId: "modifier-widget",
+      modifierPresetBrowserOpen: false,
+      modifierPresetGroupId: "modifier-widget",
+      modifierPresetSearch: "",
+      conditionInfoOpen: false,
+      conditionInfoGroupId: "modifier-widget",
+      conditionInfoKey: "",
       customWidgetEditorOpen: false,
       customWidgetEditingId: null,
       characterManagerOpen: false,
       overviewLayoutEdit: false,
+      shieldSettingsOpen: false,
     },
     rollLog: [],
   };

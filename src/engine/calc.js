@@ -97,7 +97,7 @@ export function calculateDerived(base) {
       level +
       rankBonus.ac +
       Number(base.bonuses.acItem || 0) +
-      Number(base.toggles?.raiseShield ? 1 : 0),
+      Number(base.toggles?.raiseShield ? Number(base.toggles?.raiseShieldBonus || 1) : 0),
     fortitude:
       10 + mods.con + level + rankBonus.fortitude + Number(base.bonuses.fortitudeItem || 0),
     reflex: 10 + mods.dex + level + rankBonus.reflex + Number(base.bonuses.reflexItem || 0),
@@ -116,7 +116,6 @@ export function calculateDerived(base) {
     ancestryBase + level * (classPerLevel + mods.con + perLevelModifier) + flatBonus;
   const hpCurrent = Number(base.hp.current || 0);
   const hpTemp = Number(base.hp.temp || 0);
-  const speed = Number(base.baseSpeed || 0);
   const rawModifierRows = base.modifierGroups && typeof base.modifierGroups === "object"
     ? Object.values(base.modifierGroups).flatMap((g) => (Array.isArray(g?.rows) ? g.rows : []))
     : base.modifiers || [];
@@ -125,9 +124,13 @@ export function calculateDerived(base) {
       return row.effectsBatches.map((b) => {
         const effectText = String(b?.effect || "").trim();
         const parsed = Number(effectText);
+        const targets = Array.isArray(b?.targets) && b.targets.length
+          ? b.targets.map((t) => String(t || "all"))
+          : [String(b?.target || "all")];
         return {
           enabled: row.enabled !== false && b?.enabled !== false,
-          target: String(b?.target || "all"),
+          targets,
+          target: targets[0] || "all",
           type: String(b?.type || "untyped"),
           effect: effectText,
           value: Number.isFinite(parsed) ? parsed : 0,
@@ -138,6 +141,7 @@ export function calculateDerived(base) {
   });
   const modifierSummary = summarizeModifiers(modifierRows, "all");
   const modFor = (target) => summarizeModifiers(modifierRows, target).total;
+  const speed = Number(base.baseSpeed || 0) + modFor("speed");
   // PF2E default initiative is Perception unless another skill is explicitly used.
   const initiative = defense.perception - 10 + modFor("initiative");
   const skills = Object.fromEntries(

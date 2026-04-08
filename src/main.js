@@ -1,10 +1,17 @@
 import { createStore, createInitialState } from "./state/store.js";
-import { loadState, saveState, listCharacterSaves, loadCharacterById } from "./state/persist.js";
+import {
+  loadState,
+  saveState,
+  listCharacterSaves,
+  loadCharacterById,
+  renameCharacterById,
+  deleteCharacterById,
+} from "./state/persist.js";
 import { profRankToBonus, SKILL_TO_ABILITY } from "./engine/calc.js";
 import { MODIFIER_TYPES, summarizeModifiers, selectModifierEffects } from "./engine/modifiers.js";
 import { rollDiceExpression } from "./engine/roller.js";
 import { buildWeaponHitFormula, buildWeaponCritFormula } from "./engine/weaponDamage.js";
-import { evaluateExpression } from "./engine/formula.js";
+import { evaluateExpression, expandTemplate } from "./engine/formula.js";
 import { renderBasePanel } from "./ui/basePanel.js";
 import { resolveVariableMap } from "./ui/variablesPanel.js";
 
@@ -20,16 +27,19 @@ const root = {
   base: document.querySelector("#base-panel"),
   characterHeaderName: document.querySelector("#character-header-name"),
   overviewEditBtn: document.querySelector("#overview-edit-btn"),
-  charactersBtn: document.querySelector("#characters-btn"),
-  importBtn: document.querySelector("#import-btn"),
-  newCharacterBtn: document.querySelector("#new-character-btn"),
-  exportBtn: document.querySelector("#export-btn"),
+  manageCharactersBtn: document.querySelector("#manage-characters-btn"),
+  manageCharactersPopup: document.querySelector("#manage-characters-popup"),
+  manageCharactersOpenBtn: document.querySelector("#manage-characters-open-btn"),
+  manageImportBtn: document.querySelector("#manage-import-btn"),
+  manageExportBtn: document.querySelector("#manage-export-btn"),
   rollLog: document.querySelector("#roll-log"),
   rollLogPopup: document.querySelector("#roll-log-popup"),
   rollLogToggle: document.querySelector("#roll-log-toggle"),
   rollLogClose: document.querySelector("#roll-log-close"),
   charactersPopup: document.querySelector("#characters-popup"),
   charactersList: document.querySelector("#characters-list"),
+  charactersNewBtn: document.querySelector("#characters-new-btn"),
+  charactersSaveAsBtn: document.querySelector("#characters-save-as-btn"),
   charactersClose: document.querySelector("#characters-close"),
   overviewWorkspace: document.querySelector("#overview-workspace"),
   mainCombatStrip: document.querySelector("#main-combat-strip"),
@@ -48,7 +58,7 @@ const OVERVIEW_BLOCKS = [
   "main-widgets",
   "modifier-widget",
 ];
-const REQUIRED_OVERVIEW_BLOCKS = ["base-strip", "initiative-strip", "skills-strip"];
+const REQUIRED_OVERVIEW_BLOCKS = ["base-strip", "initiative-strip", "skills-strip", "modifier-widget"];
 const baseBlockType = (id) => String(id || "").split(":")[0];
 const isBlockType = (id, type) => baseBlockType(id) === type;
 
@@ -87,13 +97,15 @@ if (seeded.base && (!seeded.base.modifierGroups || typeof seeded.base.modifierGr
 }
 for (const [gid, group] of Object.entries(seeded.base?.modifierGroups || {})) {
   if (!group || typeof group !== "object") {
-    seeded.base.modifierGroups[gid] = { title: "Modifier Widget", rows: [] };
+    seeded.base.modifierGroups[gid] = { title: "Modifier Widget", rows: [], library: [] };
     continue;
   }
   if (typeof group.title !== "string" || !group.title.trim()) group.title = "Modifier Widget";
   if (!Array.isArray(group.rows)) group.rows = [];
+  if (!Array.isArray(group.library)) group.library = [];
   group.rows = group.rows.map((row) => {
     const normalized = { ...(row || {}) };
+    if (typeof normalized.showInOverview !== "boolean") normalized.showInOverview = true;
     if (!Array.isArray(normalized.effectsBatches)) {
       if (Array.isArray(normalized.effects) && normalized.effects.length) {
         normalized.effectsBatches = normalized.effects.map((fx) => ({
@@ -117,8 +129,25 @@ for (const [gid, group] of Object.entries(seeded.base?.modifierGroups || {})) {
     return normalized;
   });
 }
+if (seeded.base?.modifierGroups && !seeded.base.modifierGroups["modifier-widget"]) {
+  const legacyModifierKey = Object.keys(seeded.base.modifierGroups).find((k) => baseBlockType(k) === "modifier-widget");
+  if (legacyModifierKey) {
+    seeded.base.modifierGroups["modifier-widget"] = structuredClone(seeded.base.modifierGroups[legacyModifierKey]);
+  } else {
+    seeded.base.modifierGroups["modifier-widget"] = { title: "Modifier Widget", rows: [], library: [] };
+  }
+}
 if (seeded.base && !Number.isFinite(Number(seeded.base.baseSpeed))) {
   seeded.base.baseSpeed = 25;
+}
+if (seeded.base && (!seeded.base.toggles || typeof seeded.base.toggles !== "object")) {
+  seeded.base.toggles = { raiseShield: false, raiseShieldBonus: 1 };
+}
+if (seeded.base && typeof seeded.base.toggles.raiseShield !== "boolean") {
+  seeded.base.toggles.raiseShield = false;
+}
+if (seeded.base && !Number.isFinite(Number(seeded.base.toggles.raiseShieldBonus))) {
+  seeded.base.toggles.raiseShieldBonus = 1;
 }
 if (seeded.ui && typeof seeded.ui.rollLogOpen !== "boolean") {
   seeded.ui.rollLogOpen = false;
@@ -135,6 +164,24 @@ if (seeded.ui && seeded.ui.modifierWidgetEditingId == null) {
 if (seeded.ui && typeof seeded.ui.modifierWidgetGroupId !== "string") {
   seeded.ui.modifierWidgetGroupId = "modifier-widget";
 }
+if (seeded.ui && typeof seeded.ui.modifierPresetBrowserOpen !== "boolean") {
+  seeded.ui.modifierPresetBrowserOpen = false;
+}
+if (seeded.ui && typeof seeded.ui.modifierPresetGroupId !== "string") {
+  seeded.ui.modifierPresetGroupId = "modifier-widget";
+}
+if (seeded.ui && typeof seeded.ui.modifierPresetSearch !== "string") {
+  seeded.ui.modifierPresetSearch = "";
+}
+if (seeded.ui && typeof seeded.ui.conditionInfoOpen !== "boolean") {
+  seeded.ui.conditionInfoOpen = false;
+}
+if (seeded.ui && typeof seeded.ui.conditionInfoGroupId !== "string") {
+  seeded.ui.conditionInfoGroupId = "modifier-widget";
+}
+if (seeded.ui && typeof seeded.ui.conditionInfoKey !== "string") {
+  seeded.ui.conditionInfoKey = "";
+}
 if (seeded.ui && typeof seeded.ui.customWidgetEditorOpen !== "boolean") {
   seeded.ui.customWidgetEditorOpen = false;
 }
@@ -149,6 +196,9 @@ if (seeded.ui && typeof seeded.ui.overviewLayoutEdit !== "boolean") {
 }
 if (seeded.ui && typeof seeded.ui.characterManagerOpen !== "boolean") {
   seeded.ui.characterManagerOpen = false;
+}
+if (seeded.ui && typeof seeded.ui.shieldSettingsOpen !== "boolean") {
+  seeded.ui.shieldSettingsOpen = false;
 }
 if (!Array.isArray(seeded.customWidgets)) {
   seeded.customWidgets = [];
@@ -233,6 +283,7 @@ if (!seeded.weaponWidget) {
   if (!Array.isArray(ww.damageToggles)) ww.damageToggles = [];
   ww.damageToggles = ww.damageToggles.map((t) => ({
     ...t,
+    alwaysOn: t.alwaysOn === true,
     multiplyOnCrit: t.multiplyOnCrit !== false,
   }));
   delete ww.critMode;
@@ -245,12 +296,17 @@ if (!seeded.weaponWidget) {
   const DAMAGE_ABILITIES = new Set(["none", ...ATTACK_ABILITIES]);
   if (!DAMAGE_ABILITIES.has(ww.damageAbility)) ww.damageAbility = "none";
   if (!Array.isArray(ww.attackBonuses)) ww.attackBonuses = [];
+  ww.attackBonuses = ww.attackBonuses.map((b) => ({
+    ...b,
+    alwaysOn: b.alwaysOn === true,
+  }));
   if (typeof ww.attackBonusFlat === "number" && ww.attackBonusFlat !== 0 && ww.attackBonuses.length === 0) {
     ww.attackBonuses.push({
       id: `ab-${Date.now()}`,
       label: "Legacy bonus",
       bonus: Number(ww.attackBonusFlat || 0),
       on: true,
+      alwaysOn: false,
     });
   }
   delete ww.attackBonusFlat;
@@ -291,6 +347,175 @@ const DAMAGE_TYPES = [
   "precision",
   "bleed",
 ];
+const CONDITION_RULES_TEXT = {
+  blinded: `You can't see. All normal terrain is difficult terrain to you. You can't detect anything using vision. You automatically critically fail Perception checks that require you to be able to see, and if vision is your only precise sense, you take a -4 status penalty to Perception checks. You are immune to visual effects. Blinded overrides dazzled.`,
+  broken: `Broken is a condition that affects only objects. An object is broken when damage has reduced its Hit Points to equal or less than its Broken Threshold. A broken object can't be used for its normal function, nor does it grant bonuses—with the exception of armor. Broken armor still grants its item bonus to AC, but it also imparts a status penalty to AC depending on its category: -1 for broken light armor, -2 for broken medium armor, or -3 for broken heavy armor.
+
+A broken item still imposes penalties and limitations normally incurred by carrying, holding, or wearing it. For example, broken armor would still impose its Dexterity modifier cap, check penalty, and so forth. If an effect makes an item broken automatically and the item has more HP than its Broken Threshold, that effect also reduces the item's current HP to the Broken Threshold.`,
+  clumsy: `Your movements become clumsy and inexact. Clumsy always includes a value. You take a status penalty equal to the condition value to Dexterity-based rolls and DCs, including AC, Reflex saves, ranged attack rolls, and skill checks using Acrobatics, Stealth, and Thievery.`,
+  concealed: `You are difficult for one or more creatures to see due to thick fog or some other obscuring feature. You can be concealed to some creatures but not others. While concealed, you can still be observed, but you're tougher to target. A creature that you're concealed from must succeed at a DC 5 flat check when targeting you with an attack, spell, or other effect. If the check fails, you aren't affected. Area effects aren't subject to this flat check.`,
+  confused: `You don't have your wits about you, and you attack wildly. You are off-guard, you don't treat anyone as your ally (though they might still treat you as theirs), and you can't Delay, Ready, or use reactions.
+
+You use all your actions to Strike or cast offensive cantrips, though the GM can have you use other actions to facilitate attack, such as draw a weapon, move so target is in reach, and so forth. Your targets are determined randomly by the GM. If you have no other viable targets, you target yourself, automatically hitting but not scoring a critical hit. If it's impossible for you to attack or cast spells, you babble incoherently, wasting your actions.
+
+Each time you take damage from an attack or spell, you can attempt a DC 11 flat check to recover from your confusion and end the condition.`,
+  controlled: `You have been commanded, magically dominated, or otherwise had your will subverted. The controller dictates how you act and can make you use any of your actions, including attacks, reactions, or even Delay. The controller usually doesn't have to spend their own actions when controlling you.`,
+  dazzled: `Your eyes are overstimulated or your vision is swimming. If vision is your only precise sense, all creatures and objects are concealed from you.`,
+  deafened: `You can't hear. You automatically critically fail Perception checks that require you to be able to hear. You take a -2 status penalty to Perception checks for initiative and checks that involve sound but also rely on other senses. If you perform an action that has the auditory trait, you must succeed at a DC 5 flat check or the action is lost; attempt the check after spending the action but before any effects are applied. You are immune to auditory effects while deafened.`,
+  doomed: `Your soul has been gripped by a powerful force that calls you closer to death. Doomed always includes a value. The dying value at which you die is reduced by your doomed value. If your maximum dying value is reduced to 0, you instantly die. When you die, you're no longer doomed.
+
+Your doomed value decreases by 1 each time you get a full night's rest.`,
+  drained: `Your health and vitality have been depleted as you've lost blood, life force, or some other essence. Drained always includes a value. You take a status penalty equal to your drained value on Constitution-based rolls and DCs, such as Fortitude saves. You also lose a number of Hit Points equal to your level (minimum 1) times the drained value, and your maximum Hit Points are reduced by the same amount. For example, if you become drained 3 and you're a 3rd-level character, you lose 9 Hit Points and reduce your maximum Hit Points by 9. Losing these Hit Points doesn't count as taking damage.
+
+Each time you get a full night's rest, your drained value decreases by 1. This increases your maximum Hit Points, but you don't immediately recover the lost Hit Points.`,
+  dying: `You are bleeding out or otherwise at death's door. While you have this condition, you are unconscious. Dying always includes a value, and if it ever reaches dying 4, you die. When you're dying, you must attempt a recovery check at the start of your turn each round to determine whether you get better or worse. Your dying condition increases by 1 if you take damage while dying, or by 2 if you take damage from an enemy's critical hit or a critical failure on your save.
+
+If you lose the dying condition by succeeding at a recovery check and are still at 0 Hit Points, you remain unconscious, but you can wake up as described in that condition. You lose the dying condition automatically and wake up if you ever have 1 Hit Point or more. Any time you lose the dying condition, you gain the wounded 1 condition, or increase your wounded condition value by 1 if you already have that condition.`,
+  encumbered: `You are carrying more weight than you can manage. While you're encumbered, you're clumsy 1 and take a 10-foot penalty to all your Speeds. As with all penalties to your Speed, this can't reduce your Speed below 5 feet.`,
+  enfeebled: `You're physically weakened. Enfeebled always includes a value. When you are enfeebled, you take a status penalty equal to the condition value to Strength-based rolls and DCs, including Strength-based melee attack rolls, Strength-based damage rolls, and Athletics checks.`,
+  fascinated: `You're compelled to focus your attention on something, distracting you from whatever else is going on around you. You take a -2 status penalty to Perception and skill checks, and you can't use concentrate actions unless they (or their intended consequences) are related to the subject of your fascination, as determined by the GM. For instance, you might be able to Seek and Recall Knowledge about the subject, but you likely couldn't cast a spell targeting a different creature. This condition ends if a creature uses hostile actions against you or any of your allies.`,
+  fatigued: `You're tired and can't summon much energy. You take a -1 status penalty to AC and saving throws. You can't use exploration activities performed while traveling, such as those on pages 438-439.
+
+You recover from fatigue after a full night's rest.`,
+  fleeing: `You're forced to run away due to fear or some other compulsion. On your turn, you must spend each of your actions trying to escape the source of the fleeing condition as expediently as possible (such as by using move actions to flee, or opening doors barring your escape). The source is usually the effect or creature that gave you the condition, though some effects might define something else as the source. You can't Delay or Ready while fleeing.`,
+  friendly: `This condition reflects a creature's disposition toward a particular character, and only supernatural effects (like a spell) can impose this condition on a PC. A creature that is friendly to a character likes that character. It is likely to agree to Requests from that character as long as they are simple, safe, and don't cost too much to fulfill. If the character (or one of their allies) uses hostile actions against the creature, the creature gains a worse attitude condition depending on the severity of the hostile action, as determined by the GM.`,
+  frightened: `You're gripped by fear and struggle to control your nerves. The frightened condition always includes a value. You take a status penalty equal to this value to all your checks and DCs. Unless specified otherwise, at the end of each of your turns, the value of your frightened condition decreases by 1.`,
+  grabbed: `You're held in place by another creature, giving you the off-guard and immobilized conditions. If you attempt a manipulate action while grabbed, you must succeed at a DC 5 flat check or it is lost; roll the check after spending the action, but before any effects are applied.`,
+  helpful: `This condition reflects a creature's disposition toward a particular character, and only supernatural effects (like a spell) can impose this condition on a PC. A creature that is helpful to a character wishes to actively aid that character. It will accept reasonable Requests from that character, as long as such requests aren't at the expense of the helpful creature's goals or quality of life. If the character (or one of their allies) uses a hostile action against the creature, the creature gains a worse attitude condition depending on the severity of the hostile action, as determined by the GM.`,
+  hidden: `While you're hidden from a creature, that creature knows the space you're in but can't tell precisely where you are. You typically become hidden by using Stealth to Hide. When Seeking a creature using only imprecise senses, it remains hidden, rather than observed. A creature you're hidden from is off-guard to you, and it must succeed at a DC 11 flat check when targeting you with an attack, spell, or other effect or it fails to affect you. Area effects aren't subject to this flat check.
+
+A creature might be able to use the Seek action to try to observe you.`,
+  hostile: `This condition reflects a creature's disposition toward a particular character, and only supernatural effects (like a spell) can impose on a PC. A creature hostile to a character actively seeks to harm that character. It doesn't necessarily attack, but it won't accept Requests from the character.`,
+  immobilized: `You are incapable of movement. You can't use any actions that have the move trait. If you're immobilized by something holding you in place and an external force would move you out of your space, the force must succeed at a check against either the DC of the effect holding you in place or the relevant defense (usually Fortitude DC) of the monster holding you in place.`,
+  indifferent: `This condition reflects a creature's disposition toward a particular character, and only supernatural effects (like a spell) can impose this condition on a PC. A creature that is indifferent to a character doesn't really care one way or the other about that character. Assume a creature's attitude to a given character is indifferent unless specified otherwise.`,
+  invisible: `You can't be seen. You're undetected to everyone. Creatures can Seek to detect you; if a creature succeeds at its Perception check against your Stealth DC, you become hidden to that creature until you Sneak to become undetected again. If you become invisible while someone can already see you, you start out hidden to them (instead of undetected) until you successfully Sneak. You can't become observed while invisible except via special abilities or magic.`,
+  observed: `Anything in plain view is observed by you. If a creature takes measures to avoid detection, such as by using Stealth to Hide, it can become hidden or undetected instead of observed. If you have another precise sense besides sight, you might be able to observe a creature or object using that sense instead. You can observe a creature with only your precise senses. When Seeking a creature using only imprecise senses, it remains hidden, rather than observed.`,
+  "off-guard": `You're distracted or otherwise unable to focus your full attention on defense. You take a -2 circumstance penalty to AC. Some effects give you the off-guard condition only to certain creatures or against certain attacks. Others—especially conditions—can make you off-guard against everything. If a rule doesn't specify that the condition applies only to certain circumstances, it applies to all of them, such as "The target is off-guard."`,
+  paralyzed: `You're frozen in place. You have the off-guard condition and can't act except to Recall Knowledge and use actions that require only your mind (as determined by the GM). Your senses still function, but only in the areas you can perceive without moving, so you can't Seek.`,
+  "persistent-damage": `You are taking damage from an ongoing effect, such as from being lit on fire. This appears as "X persistent [type] damage," where "X" is the amount of damage dealt and "[type]" is the damage type. Like normal damage, it can be doubled or halved based on the results of an attack roll or saving throw. Instead of taking persistent damage immediately, you take it at the end of each of your turns as long as you have the condition, rolling any damage dice anew each time. After you take persistent damage, roll a DC 15 flat check to see if you recover from the persistent damage. If you succeed, the condition ends.
+
+Persistent Damage Rules
+The additional rules presented below apply to persistent damage in certain cases.
+
+Persistent damage runs its course and automatically ends after a certain amount of time as fire burns out, blood clots, and the like. The GM determines when this occurs, but it usually takes 1 minute.
+Assisted Recovery
+You can take steps to help yourself recover from persistent damage, or an ally can help you, allowing you to attempt an additional flat check before the end of your turn. This is usually an activity requiring 2 actions, and it must be something that would reasonably improve your chances (as determined by the GM). For example, you might try to smother a flame or wash off acid. This allows you to attempt an extra flat check immediately, but only once per round.
+
+The GM decides how your help works, using the following examples as guidelines when there's not a specific action that applies.
+The action to help might require a skill check or another roll to determine its effectiveness.
+Reduce the DC of the flat check to 10 for a particularly appropriate type of help, such as dousing you in water to put out flames.
+Automatically end the condition due to the type of help, such as healing that restores you to your maximum HP to end persistent bleed damage, or submerging yourself in a lake to end persistent fire damage.
+Alter the number of actions required to help you if the means the helper uses are especially efficient or remarkably inefficient.
+
+Immunities, Resistances, And Weaknesses
+Immunities, resistances, and weaknesses all apply to persistent damage. If an effect deals initial damage in addition to persistent damage, apply immunities, resistances, and weaknesses separately to the initial damage and to the persistent damage. Usually, if an effect negates the initial damage, it also negates the persistent damage, such as with a slashing weapon that also deals persistent bleed damage because it cut you. The GM might rule otherwise in some situations.
+Multiple Persistent Damage Conditions
+You can be simultaneously affected by multiple persistent damage conditions so long as they have different damage types. If you would gain more than one persistent damage condition with the same damage type, the higher amount of damage overrides the lower amount. If it's unclear which damage would be higher, such as if you're already taking 2 persistent fire damage and then begin taking 1d4 persistent fire damage, the GM decides which source of damage would better fit the scene. The damage you take from persistent damage occurs all at once, so if something triggers when you take damage, it triggers only once; for example, if you're dying with several types of persistent damage, the persistent damage increases your dying condition only once.`,
+  petrified: `You have been turned to stone. You can't act, nor can you sense anything. You become an object with a Bulk double your normal Bulk (typically 12 for a petrified Medium creature or 6 for a petrified Small creature), AC 9, Hardness 8, and the same current Hit Points you had when alive. You don't have a Broken Threshold. When the petrified condition ends, you have the same number of Hit Points you had as a statue. If the statue is destroyed, you immediately die. While petrified, your mind and body are in stasis, so you don't age or notice the passing of time.`,
+  prone: `You're lying on the ground. You are off-guard and take a -2 circumstance penalty to attack rolls. The only move actions you can use while you're prone are Crawl and Stand. Standing up ends the prone condition. You can Take Cover while prone to hunker down and gain greater cover against ranged attacks, even if you don't have an object to get behind, which grants you a +4 circumstance bonus to AC against ranged attacks (but you remain off-guard).
+
+If you would be knocked prone while you're Climbing or Flying, you fall. You can't be knocked prone when Swimming.`,
+  quickened: `You're able to act more quickly. You gain 1 additional action at the start of your turn each round. Many effects that make you quickened require you use this extra action only in certain ways. If you become quickened from multiple sources, you can use the extra action you've been granted for any single action allowed by any of the effects that made you quickened. Because quickened has its effect at the start of your turn, you don't immediately gain actions if you become quickened during your turn.`,
+  restrained: `You're tied up and can barely move, or a creature has you pinned. You have the off-guard and immobilized conditions, and you can't use any attack or manipulate actions except to attempt to Escape or Force Open your bonds. Restrained overrides grabbed.`,
+  sickened: `You feel ill. Sickened always includes a value. You take a status penalty equal to this value on all your checks and DCs. You can't willingly ingest anything—including elixirs and potions—while sickened.
+
+You can spend a single action retching in an attempt to recover, which lets you immediately attempt a Fortitude save against the DC of the effect that made you sickened. On a success, you reduce your sickened value by 1 (or by 2 on a critical success).`,
+  slowed: `You have fewer actions. Slowed always includes a value. When you regain your actions, reduce the number of actions regained by your slowed value. Because you regain actions at the start of your turn, you don't immediately lose actions if you become slowed during your turn.`,
+  stunned: `You've become senseless. You can't act. Stunned usually includes a value, which indicates how many total actions you lose, possibly over multiple turns, from being stunned. Each time you regain actions, reduce the number you regain by your stunned value, then reduce your stunned value by the number of actions you lost. For example, if you were stunned 4, you would lose all 3 of your actions on your turn, reducing you to stunned 1; on your next turn, you would lose 1 more action, and then be able to use your remaining 2 actions normally. Stunned might also have a duration instead, such as "stunned for 1 minute," causing you to lose all your actions for the duration.
+
+Stunned overrides slowed. If the duration of your stunned condition ends while you are slowed, you count the actions lost to the stunned condition toward those lost to being slowed. So, if you were stunned 1 and slowed 2 at the beginning of your turn, you would lose 1 action from stunned, and then lose only 1 additional action by being slowed, so you would still have 1 action remaining to use that turn.`,
+  stupefied: `Your thoughts and instincts are clouded. Stupefied always includes a value. You take a status penalty equal to this value on Intelligence-, Wisdom-, and Charisma-based rolls and DCs, including Will saving throws, spell attack modifiers, spell DCs, and skill checks that use these attribute modifiers. Any time you attempt to Cast a Spell while stupefied, the spell is disrupted unless you succeed at a flat check with a DC equal to 5 + your stupefied value.`,
+  unconscious: `You're sleeping or have been knocked out. You can't act. You take a -4 status penalty to AC, Perception, and Reflex saves, and you have the blinded and off-guard conditions. When you gain this condition, you fall prone and drop items you're holding unless the effect states otherwise or the GM determines you're positioned so you wouldn't.
+
+If you're unconscious because you're dying, you can't wake up while you have 0 Hit Points. If you are restored to 1 Hit Point or more, you lose the dying and unconscious conditions and can act normally on your next turn.
+
+If you are unconscious and at 0 Hit Points, but not dying, you return to 1 Hit Point and awaken after sufficient time passes. The GM determines how long you remain unconscious, from a minimum of 10 minutes to several hours. If you are healed, you lose the unconscious condition and can act normally on your next turn.
+
+If you're unconscious and have more than 1 Hit Point (typically because you are asleep or unconscious due to an effect), you wake up in one of the following ways.
+You take damage, though if the damage reduces you to 0 Hit Points, you remain unconscious and gain the dying condition as normal.
+You receive healing, other than the natural healing you get from resting.
+Someone shakes you awake with an Interact action.
+Loud noise around you might wake you. At the start of your turn, you automatically attempt a Perception check against the noise's DC (or the lowest DC if there is more than one noise), waking up if you succeed. If creatures are attempting to stay quiet around you, this Perception check uses their Stealth DCs. Some effects make you sleep so deeply that they don't allow you this Perception check.
+If you are simply asleep, the GM decides you wake up either because you have had a restful night's sleep or something disrupted that rest.`,
+  undetected: `When you are undetected by a creature, that creature can't see you at all, has no idea what space you occupy, and can't target you, though you still can be affected by abilities that target an area. When you're undetected by a creature, that creature is off-guard to you.
+
+A creature you're undetected by can guess which square you're in to try targeting you. It must pick a square and attempt an attack. This works like targeting a hidden creature (requiring a DC 11 flat check, as described under Detecting Creatures), but the flat check and attack roll are rolled in secret by the GM, who doesn't reveal whether the attack missed due to failing the flat check, failing the attack roll, or choosing the wrong square. They can Seek to try to find you.`,
+  unfriendly: `This condition reflects a creature's disposition toward a particular character, and only supernatural effects (like a spell) can impose this condition on a PC. A creature that is unfriendly to a character dislikes and distrusts that character. The unfriendly creature won't accept Requests from the character.`,
+  unnoticed: `If you're unnoticed by a creature, that creature has no idea you're present. When you're unnoticed, you're also undetected. This matters for abilities that can be used only against targets totally unaware of your presence.`,
+  wounded: `You have been seriously injured. If you lose the dying condition and do not already have the wounded condition, you become wounded 1. If you already have the wounded condition when you lose the dying condition, your wounded condition value increases by 1. If you gain the dying condition while wounded, increase your dying condition value by your wounded value.
+
+The wounded condition ends if someone successfully restores Hit Points to you using Treat Wounds, or if you are restored to full Hit Points by any means and rest for 10 minutes.`,
+};
+const MODIFIER_PRESETS = [
+  { key: "blinded", label: "Blinded", source: "Player Core pg. 442", rulesText: "You can't see. Key numeric impact in this sheet: typically -4 status to Perception checks relying on vision.", effectsTemplate: [{ targets: ["perception", "initiative"], target: "perception", type: "status", effect: "-4", enabled: true }] },
+  { key: "broken", label: "Broken", source: "Player Core pg. 442", rulesText: "Object-only condition. Broken armor applies AC status penalty based on armor category; other object handling is informational in this sheet." },
+  { key: "clumsy", label: "Clumsy", source: "Player Core pg. 442", rulesText: "Status penalty equal to value on Dex-based rolls/DCs, including AC, Reflex, ranged attack rolls, and Acrobatics/Stealth/Thievery.", levelConfig: { min: 1, max: 4, default: 1, perLevel: -1 }, effectsTemplate: [{ targets: ["ac", "reflex", "initiative", "attack", "skill:acrobatics", "skill:stealth", "skill:thievery"], target: "ac", type: "status", enabled: true }] },
+  { key: "concealed", label: "Concealed", source: "Player Core pg. 442", rulesText: "Primarily DC 5 flat check to target; no direct numeric stat modifier auto-applied." },
+  { key: "confused", label: "Confused", source: "Player Core pg. 442", rulesText: "You are off-guard and action economy is constrained/randomized.", effectsTemplate: [{ targets: ["ac"], target: "ac", type: "circumstance", effect: "-2", enabled: true }] },
+  { key: "controlled", label: "Controlled", source: "Player Core pg. 442", rulesText: "Action control condition; no direct numeric modifier auto-applied." },
+  { key: "dazzled", label: "Dazzled", source: "Player Core pg. 442", rulesText: "Typically makes targets concealed from you; no direct numeric modifier auto-applied." },
+  { key: "deafened", label: "Deafened", source: "Player Core pg. 443", rulesText: "You can't hear. Numeric portion mapped as -2 status to Perception and initiative checks relying on hearing.", effectsTemplate: [{ targets: ["perception", "initiative"], target: "perception", type: "status", effect: "-2", enabled: true }] },
+  { key: "doomed", label: "Doomed", source: "Player Core pg. 443", rulesText: "Affects dying threshold/death. No direct numeric modifier in this sheet.", levelConfig: { min: 1, max: 4, default: 1, perLevel: 0 }, effectsTemplate: [] },
+  { key: "drained", label: "Drained", source: "Player Core pg. 443", rulesText: "Status penalty equal to value on Constitution-based rolls/DCs (Fortitude). HP max/current impact is informational here.", levelConfig: { min: 1, max: 4, default: 1, perLevel: -1 }, effectsTemplate: [{ targets: ["fortitude"], target: "fortitude", type: "status", enabled: true }] },
+  { key: "dying", label: "Dying", source: "Player Core pg. 443", rulesText: "Recovery/threshold condition. No direct numeric modifier auto-applied.", levelConfig: { min: 1, max: 4, default: 1, perLevel: 0 }, effectsTemplate: [] },
+  { key: "encumbered", label: "Encumbered", source: "Player Core pg. 443", rulesText: "You are clumsy 1 and take a 10-foot speed penalty.", effectsTemplate: [{ targets: ["ac", "reflex", "initiative", "attack", "skill:acrobatics", "skill:stealth", "skill:thievery"], target: "ac", type: "status", effect: "-1", enabled: true }, { targets: ["speed"], target: "speed", type: "status", effect: "-10", enabled: true }] },
+  { key: "enfeebled", label: "Enfeebled", source: "Player Core pg. 443", rulesText: "Status penalty equal to value on Strength-based rolls/DCs, including melee attack, Strength damage, and Athletics.", levelConfig: { min: 1, max: 4, default: 1, perLevel: -1 }, effectsTemplate: [{ targets: ["attack", "damage", "skill:athletics"], target: "attack", type: "status", enabled: true }] },
+  { key: "fascinated", label: "Fascinated", source: "Player Core pg. 443", rulesText: "You take a -2 status penalty to Perception and skill checks; concentrate restrictions are informational.", effectsTemplate: [{ targets: ["perception", "initiative", "skill"], target: "perception", type: "status", effect: "-2", enabled: true }] },
+  { key: "fatigued", label: "Fatigued", source: "Player Core pg. 444", rulesText: "You take a -1 status penalty to AC and saving throws.", effectsTemplate: [{ targets: ["ac", "fortitude", "reflex", "will"], target: "ac", type: "status", effect: "-1", enabled: true }] },
+  { key: "fleeing", label: "Fleeing", source: "Player Core pg. 444", rulesText: "Action behavior condition; no direct numeric modifier auto-applied." },
+  { key: "friendly", label: "Friendly", source: "Player Core pg. 444", rulesText: "Attitude/disposition condition; no direct numeric modifier auto-applied." },
+  { key: "frightened", label: "Frightened", source: "Player Core pg. 444", rulesText: "Status penalty equal to frightened value to all checks and DCs; usually decreases by 1 each turn.", levelConfig: { min: 1, max: 4, default: 1, perLevel: -1 }, effectsTemplate: [{ targets: ["all"], target: "all", type: "status", enabled: true }] },
+  { key: "grabbed", label: "Grabbed", source: "Player Core pg. 444", rulesText: "You are off-guard and immobilized. AC penalty is mapped; movement lock is informational.", effectsTemplate: [{ targets: ["ac"], target: "ac", type: "circumstance", effect: "-2", enabled: true }] },
+  { key: "helpful", label: "Helpful", source: "Player Core pg. 444", rulesText: "Attitude/disposition condition; no direct numeric modifier auto-applied." },
+  { key: "hidden", label: "Hidden", source: "Player Core pg. 444", rulesText: "Detection state; no direct numeric modifier auto-applied." },
+  { key: "hostile", label: "Hostile", source: "Player Core pg. 444", rulesText: "Attitude/disposition condition; no direct numeric modifier auto-applied." },
+  { key: "immobilized", label: "Immobilized", source: "Player Core pg. 444", rulesText: "Can't use move actions; no direct numeric modifier auto-applied." },
+  { key: "indifferent", label: "Indifferent", source: "Player Core pg. 444", rulesText: "Attitude/disposition condition; no direct numeric modifier auto-applied." },
+  { key: "invisible", label: "Invisible", source: "Player Core pg. 444", rulesText: "Detection/targeting state; no direct numeric modifier auto-applied." },
+  { key: "observed", label: "Observed", source: "Player Core pg. 444", rulesText: "Detection state; no direct numeric modifier auto-applied." },
+  { key: "off-guard", label: "Off-Guard", source: "Player Core pg. 445", rulesText: "You take a -2 circumstance penalty to AC.", effectsTemplate: [{ targets: ["ac"], target: "ac", type: "circumstance", effect: "-2", enabled: true }] },
+  { key: "paralyzed", label: "Paralyzed", source: "Player Core pg. 445", rulesText: "You are off-guard and can't act (except limited mental actions). AC penalty mapped; action lock informational.", effectsTemplate: [{ targets: ["ac"], target: "ac", type: "circumstance", effect: "-2", enabled: true }] },
+  { key: "persistent-damage", label: "Persistent Damage", source: "Player Core pg. 445", rulesText: "Ongoing damage process condition with flat-check recovery; no direct static numeric modifier auto-applied." },
+  { key: "petrified", label: "Petrified", source: "Player Core pg. 445", rulesText: "Transformed into object with fixed defenses; no direct numeric modifier auto-applied in this sheet." },
+  { key: "prone", label: "Prone", source: "Player Core pg. 445", rulesText: "You are off-guard and take a -2 circumstance penalty to attack rolls.", effectsTemplate: [{ targets: ["ac"], target: "ac", type: "circumstance", effect: "-2", enabled: true }, { targets: ["attack"], target: "attack", type: "circumstance", effect: "-2", enabled: true }] },
+  { key: "quickened", label: "Quickened", source: "Player Core pg. 446", rulesText: "Action-economy condition (+1 action with restrictions). No direct numeric modifier auto-applied." },
+  { key: "restrained", label: "Restrained", source: "Player Core pg. 446", rulesText: "You are off-guard, immobilized, and action-limited. AC penalty mapped; movement/action restrictions informational.", effectsTemplate: [{ targets: ["ac"], target: "ac", type: "circumstance", effect: "-2", enabled: true }] },
+  { key: "sickened", label: "Sickened", source: "Player Core pg. 446", rulesText: "Status penalty equal to sickened value on all checks and DCs.", levelConfig: { min: 1, max: 4, default: 1, perLevel: -1 }, effectsTemplate: [{ targets: ["all"], target: "all", type: "status", enabled: true }] },
+  { key: "slowed", label: "Slowed", source: "Player Core pg. 446", rulesText: "Action-economy condition (fewer actions). No direct numeric modifier auto-applied.", levelConfig: { min: 1, max: 4, default: 1, perLevel: 0 }, effectsTemplate: [] },
+  { key: "stunned", label: "Stunned", source: "Player Core pg. 446", rulesText: "Action-economy condition (can't act / lose actions). No direct numeric modifier auto-applied.", levelConfig: { min: 1, max: 4, default: 1, perLevel: 0 }, effectsTemplate: [] },
+  { key: "stupefied", label: "Stupefied", source: "Player Core pg. 446", rulesText: "Status penalty equal to value on Int/Wis/Cha rolls/DCs, including Will and many mental skills.", levelConfig: { min: 1, max: 4, default: 1, perLevel: -1 }, effectsTemplate: [{ targets: ["will", "perception", "initiative", "skill:arcana", "skill:crafting", "skill:medicine", "skill:nature", "skill:occultism", "skill:performance", "skill:religion", "skill:society", "skill:survival", "skill:deception", "skill:diplomacy", "skill:intimidation"], target: "will", type: "status", enabled: true }] },
+  { key: "unconscious", label: "Unconscious", source: "Player Core pg. 446", rulesText: "You can't act; -4 status to AC, Perception, and Reflex; also blinded/off-guard.", effectsTemplate: [{ targets: ["ac", "perception", "reflex"], target: "ac", type: "status", effect: "-4", enabled: true }] },
+  { key: "undetected", label: "Undetected", source: "Player Core pg. 447", rulesText: "Detection state; no direct numeric modifier auto-applied." },
+  { key: "unfriendly", label: "Unfriendly", source: "Player Core pg. 447", rulesText: "Attitude/disposition condition; no direct numeric modifier auto-applied." },
+  { key: "unnoticed", label: "Unnoticed", source: "Player Core pg. 447", rulesText: "Detection state; no direct numeric modifier auto-applied." },
+  { key: "wounded", label: "Wounded", source: "Player Core pg. 447", rulesText: "Interacts with dying value and recovery; no direct numeric modifier auto-applied.", levelConfig: { min: 1, max: 4, default: 1, perLevel: 0 }, effectsTemplate: [] },
+];
+for (const preset of MODIFIER_PRESETS) {
+  if (CONDITION_RULES_TEXT[preset.key]) {
+    preset.rulesText = CONDITION_RULES_TEXT[preset.key];
+  }
+}
+
+function applyPresetLevelToRow(row, level) {
+  const cfg = row?.levelConfig;
+  if (!cfg) return;
+  const min = Number(cfg.min || 1);
+  const max = Number(cfg.max || min);
+  const safeLevel = Math.max(min, Math.min(max, Number(level || min)));
+  const perLevel = Number(cfg.perLevel || 0);
+  const effectVal = perLevel * safeLevel;
+  row.level = safeLevel;
+  row.label = `${String(cfg.baseLabel || row.label || "Condition")} ${safeLevel}`;
+  row.effectsBatches = (row.effectsBatches || []).map((b) => ({
+    ...b,
+    effect: String(effectVal),
+  }));
+  row.effect = (row.effectsBatches || []).map((b) => b.effect).join(" + ");
+  row.value = (row.effectsBatches || []).reduce((sum, b) => {
+    const n = Number(b.effect);
+    return sum + (Number.isFinite(n) ? n : 0);
+  }, 0);
+}
 const WEAPON_PROF_TYPES = ["unarmed", "simple", "martial", "advanced"];
 const ATTACK_ABILITY_SELECT = [
   { value: "maxStrDex", label: "Higher STR / DEX" },
@@ -396,7 +621,12 @@ function normalizeOverviewRows(rowsInput) {
             : [];
         const cols = colsRaw.map((c) =>
           (Array.isArray(c) ? c : [])
-            .map((id) => (id === "main-strip" ? ["base-strip", "skills-strip"] : [id]))
+            .map((id) => {
+              const type = baseBlockType(id);
+              if (id === "main-strip") return ["base-strip", "skills-strip"];
+              if (type === "modifier-widget") return ["modifier-widget"];
+              return [id];
+            })
             .flat()
             .filter((id) => OVERVIEW_BLOCKS.includes(baseBlockType(id)))
         );
@@ -488,7 +718,6 @@ function renderOverviewWorkspace(state) {
       <button type="button" id="ov-add-row-btn">Add</button>
       <button type="button" id="ov-add-attack-btn">Add Attack Widget</button>
       <button type="button" id="ov-add-widgets-btn">Add Flex Widget</button>
-      <button type="button" id="ov-add-modifier-btn">Add Modifier Widget</button>
     </div>` : ""}
     <div class="overview-layout ${editMode ? "edit-mode" : ""}">
       ${rows
@@ -516,7 +745,7 @@ function renderOverviewWorkspace(state) {
                     <div class="overview-block-grip" title="Drag block">::</div>
                     ${
                       editMode &&
-                      (isBlockType(id, "weapon-widget") || isBlockType(id, "main-widgets") || isBlockType(id, "modifier-widget"))
+                      (isBlockType(id, "weapon-widget") || isBlockType(id, "main-widgets"))
                         ? `<button type="button" class="mini-btn" data-ov-remove-block="${id}">Remove</button>`
                         : ""
                     }
@@ -680,16 +909,6 @@ function renderOverviewWorkspace(state) {
       draft.overviewLayout = { rows: rowsNow };
     });
   });
-  root.overviewWorkspace.querySelector("#ov-add-modifier-btn")?.addEventListener("click", () => {
-    store.patch((draft) => {
-      const rowsNow = normalizeOverviewRows(draft.overviewLayout?.rows);
-      const id = `modifier-widget:${uid()}`;
-      rowsNow[0].cols[0].push(id);
-      draft.base.modifierGroups = draft.base.modifierGroups || {};
-      draft.base.modifierGroups[id] = { title: "Modifier Widget", rows: [] };
-      draft.overviewLayout = { rows: rowsNow };
-    });
-  });
   root.overviewWorkspace.querySelectorAll("[data-ov-remove-block]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const blockId = btn.dataset.ovRemoveBlock;
@@ -710,6 +929,18 @@ function renderOverviewWorkspace(state) {
         }
         if (isBlockType(blockId, "modifier-widget") && draft.base?.modifierGroups?.[blockId]) {
           delete draft.base.modifierGroups[blockId];
+          if (draft.ui.modifierWidgetGroupId === blockId) {
+            draft.ui.modifierWidgetGroupId = "modifier-widget";
+            draft.ui.modifierWidgetEditingId = null;
+            draft.ui.modifierWidgetEditorOpen = false;
+            draft.ui.modifierPresetGroupId = "modifier-widget";
+            draft.ui.modifierPresetBrowserOpen = false;
+          }
+          if (draft.ui.conditionInfoGroupId === blockId) {
+            draft.ui.conditionInfoGroupId = "modifier-widget";
+            draft.ui.conditionInfoOpen = false;
+            draft.ui.conditionInfoKey = "";
+          }
         }
         draft.overviewLayout = { rows: compactOverviewRows(rowsNow) };
       });
@@ -777,9 +1008,11 @@ function renderCharacterManager(state) {
     .sort((a, b) => b.lastSavedAt - a.lastSavedAt)
     .map(
       (row) => `<div class="log-entry ${row.isActive ? "latest-roll" : ""}">
-        <div><strong>${escapeHtml(row.saveName)}</strong> <span class="muted">(${escapeHtml(row.characterName)})</span></div>
+        <div><strong>${escapeHtml(row.characterName)}</strong> <span class="muted">(Level ${Number(row.level || 1)})</span></div>
         <div class="row">
           <button type="button" class="mini-btn" data-load-char-id="${row.id}">Load</button>
+          <button type="button" class="mini-btn" data-rename-char-id="${row.id}">Rename</button>
+          <button type="button" class="mini-btn danger-btn" data-delete-char-id="${row.id}">Delete</button>
           <span class="muted">${row.lastSavedAt ? new Date(row.lastSavedAt).toLocaleString() : ""}</span>
         </div>
       </div>`
@@ -798,13 +1031,80 @@ function renderCharacterManager(state) {
         Object.assign(draft, loaded);
         draft.ui.characterManagerOpen = false;
       });
-      addRollLog(`Loaded character: ${loaded.saveMeta?.saveName || loaded.base?.characterName || "Character"}`, false);
+      addRollLog(`Loaded character: ${loaded.base?.characterName || loaded.saveMeta?.saveName || "Character"}`, false);
+    });
+  });
+  root.charactersList.querySelectorAll("[data-rename-char-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.renameCharId;
+      const currentState = loadCharacterById(id);
+      if (!currentState) return;
+      const currentName = String(currentState.base?.characterName || currentState.saveMeta?.saveName || "Character");
+      const nextName = window.prompt("Enter a new character name:", currentName);
+      if (nextName == null) return;
+      const trimmed = String(nextName).trim();
+      if (!trimmed) return;
+      const didRename = renameCharacterById(id, trimmed);
+      if (!didRename) return;
+      const activeId = store.getState().saveMeta?.saveId;
+      if (activeId === id) {
+        store.patch((draft) => {
+          draft.base = draft.base || {};
+          draft.base.characterName = trimmed;
+          draft.saveMeta = draft.saveMeta || {};
+          draft.saveMeta.saveName = trimmed;
+        });
+      } else {
+        store.patch((draft) => {
+          draft.ui.characterManagerOpen = true;
+        });
+      }
+      addRollLog(`Renamed character: ${trimmed}`, false);
+    });
+  });
+  root.charactersList.querySelectorAll("[data-delete-char-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.deleteCharId;
+      if (!id) return;
+      const toDelete = loadCharacterById(id);
+      const label = String(toDelete?.saveMeta?.saveName || toDelete?.base?.characterName || "Character");
+      if (!window.confirm(`Delete "${label}"? This cannot be undone.`)) return;
+      const result = deleteCharacterById(id);
+      if (!result.deleted) return;
+      const activeId = store.getState().saveMeta?.saveId;
+      if (activeId === id) {
+        const nextState = result.nextActiveId ? loadCharacterById(result.nextActiveId) : null;
+        store.patch((draft) => {
+          if (nextState) {
+            Object.assign(draft, nextState);
+          } else {
+            Object.assign(draft, createInitialState());
+          }
+          draft.ui.characterManagerOpen = false;
+        });
+      } else {
+        store.patch((draft) => {
+          draft.ui.characterManagerOpen = true;
+        });
+      }
+      addRollLog(`Deleted character: ${label}`, false);
     });
   });
 }
 
 function renderOverview(state) {
   renderOverviewWorkspace(state);
+  const modifierRowsFlat = flattenModifierRows(state.base);
+  const modTone = (total) => (total > 0 ? "mod-positive" : total < 0 ? "mod-negative" : "mod-neutral");
+  const acModTotal = summarizeModifiers(modifierRowsFlat, "ac").total;
+  const fortModTotal = summarizeModifiers(modifierRowsFlat, "fortitude").total;
+  const reflexModTotal = summarizeModifiers(modifierRowsFlat, "reflex").total;
+  const willModTotal = summarizeModifiers(modifierRowsFlat, "will").total;
+  const perceptionModTotal = summarizeModifiers(modifierRowsFlat, "perception").total;
+  const classDcModTotal = summarizeModifiers(modifierRowsFlat, "classDc").total;
+  const skillAllModTotal = summarizeModifiers(modifierRowsFlat, "skill").total;
+  const initiativeModTotal = summarizeModifiers(modifierRowsFlat, "initiative").total;
+  const speedModTotal = summarizeModifiers(modifierRowsFlat, "speed").total;
   const perceptionBonus = state.derived.defense.perception - 10;
   const fortBonus = state.derived.defense.fortitude - 10;
   const reflexBonus = state.derived.defense.reflex - 10;
@@ -820,24 +1120,30 @@ function renderOverview(state) {
         <label class="strip-label">Temp HP: <input id="strip-hp-temp" type="number" value="${state.base.hp.temp}" /></label>
       </span>
       <span class="strip-group">
-        <span class="defense-pill">Speed ${Number(state.derived.speed || state.base.baseSpeed || 0)} ft</span>
+        <span class="defense-pill ${modTone(speedModTotal)}">Speed ${Number(state.derived.speed || state.base.baseSpeed || 0)} ft</span>
       </span>
     </div>
     <div class="row strip-row">
       <span class="defense-group">
-        <button type="button" class="defense-pill roll-pill" data-roll-name="Fortitude" data-roll-bonus="${fortBonus}">+${fortBonus} Fortitude</button>
-        <button type="button" class="defense-pill roll-pill" data-roll-name="Reflex" data-roll-bonus="${reflexBonus}">+${reflexBonus} Reflex</button>
-        <button type="button" class="defense-pill roll-pill" data-roll-name="Will" data-roll-bonus="${willBonus}">+${willBonus} Will</button>
+        <button type="button" class="defense-pill roll-pill ${modTone(fortModTotal)}" data-roll-name="Fortitude" data-roll-bonus="${fortBonus}">+${fortBonus} Fortitude</button>
+        <button type="button" class="defense-pill roll-pill ${modTone(reflexModTotal)}" data-roll-name="Reflex" data-roll-bonus="${reflexBonus}">+${reflexBonus} Reflex</button>
+        <button type="button" class="defense-pill roll-pill ${modTone(willModTotal)}" data-roll-name="Will" data-roll-bonus="${willBonus}">+${willBonus} Will</button>
       </span>
     </div>
     <div class="row strip-row">
       <span class="defense-group">
-        <button type="button" class="defense-pill defense-pill-ac roll-pill" data-roll-name="AC" data-roll-bonus="${acBonus}">AC${state.derived.defense.ac}</button>
+        <button type="button" class="defense-pill defense-pill-ac roll-pill ${modTone(acModTotal)} ${state.base.toggles?.raiseShield ? "shield-active" : ""}" data-roll-name="AC" data-roll-bonus="${acBonus}">AC${state.derived.defense.ac}</button>
         <label class="strip-label">
           <input id="strip-raise-shield" type="checkbox" ${state.base.toggles?.raiseShield ? "checked" : ""} />
           Shield/ Parry
         </label>
-        <button type="button" class="defense-pill roll-pill" data-roll-name="Class DC" data-roll-bonus="${classDcBonus}">Class DC ${state.derived.classDc}</button>
+        <button type="button" class="mini-btn" id="strip-raise-shield-settings-btn" aria-label="Shield settings">⚙</button>
+        <div class="strip-inline-settings ${state.ui.shieldSettingsOpen ? "" : "hidden"}" id="strip-raise-shield-settings">
+          <label>Circumstance bonus
+            <input id="strip-raise-shield-bonus" type="number" min="0" step="1" value="${Number(state.base.toggles?.raiseShieldBonus || 1)}" />
+          </label>
+        </div>
+        <button type="button" class="defense-pill roll-pill ${modTone(classDcModTotal)}" data-roll-name="Class DC" data-roll-bonus="${classDcBonus}">Class DC ${state.derived.classDc}</button>
       </span>
     </div>
   `;
@@ -845,8 +1151,8 @@ function renderOverview(state) {
     root.mainInitiativeStrip.innerHTML = `
       <div class="row strip-row">
         <span class="strip-group strip-pill-group">
-          <button type="button" class="defense-pill roll-pill" data-roll-name="Initiative" data-roll-bonus="${state.derived.initiative}">+${state.derived.initiative} Initiative</button>
-          <button type="button" class="defense-pill roll-pill" data-roll-name="Perception" data-roll-bonus="${perceptionBonus}">+${perceptionBonus} Perception</button>
+          <button type="button" class="defense-pill roll-pill ${modTone(initiativeModTotal)}" data-roll-name="Initiative" data-roll-bonus="${state.derived.initiative}">+${state.derived.initiative} Initiative</button>
+          <button type="button" class="defense-pill roll-pill ${modTone(perceptionModTotal)}" data-roll-name="Perception" data-roll-bonus="${perceptionBonus}">+${perceptionBonus} Perception</button>
         </span>
       </div>
     `;
@@ -874,7 +1180,8 @@ function renderOverview(state) {
       const bonus = state.derived.skills[name];
       const label = `${name[0].toUpperCase()}${name.slice(1)}`;
       const ability = String(state.derived.skillAbilities?.[name] || "str").toUpperCase();
-      return `<button type="button" class="defense-pill roll-pill skill-roll-pill" data-roll-name="${label}" data-roll-bonus="${bonus}">+${bonus} ${label} (${ability})</button>`;
+      const skillModTotal = skillAllModTotal + summarizeModifiers(modifierRowsFlat, `skill:${name}`).total;
+      return `<button type="button" class="defense-pill roll-pill skill-roll-pill ${modTone(skillModTotal)}" data-roll-name="${label}" data-roll-bonus="${bonus}">+${bonus} ${label} (${ability})</button>`;
     })
     .join(" ");
   const customSkillRows = (state.base.customProficiencies?.skill || [])
@@ -886,7 +1193,7 @@ function renderOverview(state) {
       const bonus = Number(state.base.level || 0) + profRankToBonus(rank) + abilityMod;
       const label = String(entry.name).trim();
       const ability = String(abilityKey).toUpperCase();
-      return `<button type="button" class="defense-pill roll-pill skill-roll-pill custom-skill-roll-pill" data-roll-name="${escapeHtml(
+      return `<button type="button" class="defense-pill roll-pill skill-roll-pill custom-skill-roll-pill ${modTone(skillAllModTotal)}" data-roll-name="${escapeHtml(
         label
       )}" data-roll-bonus="${bonus}">${bonus >= 0 ? "+" : ""}${bonus} ${escapeHtml(label)} (${ability})</button>`;
     })
@@ -894,8 +1201,6 @@ function renderOverview(state) {
   if (customSkillRows) {
     root.mainSkillsStrip.innerHTML += ` ${customSkillRows}`;
   }
-  const modifierRowsFlat = flattenModifierRows(state.base);
-
   const modifierTargets = [
     { value: "all", label: "All" },
     { value: "attack", label: "Attack rolls" },
@@ -905,6 +1210,7 @@ function renderOverview(state) {
     { value: "ac", label: "AC" },
     { value: "classDc", label: "Class DC" },
     { value: "initiative", label: "Initiative" },
+    { value: "speed", label: "Speed" },
     { value: "perception", label: "Perception" },
     { value: "fortitude", label: "Fortitude" },
     { value: "reflex", label: "Reflex" },
@@ -916,25 +1222,49 @@ function renderOverview(state) {
   root.modifierWidget = modifierTables[0] || null;
   modifierTables.forEach((container) => {
     const blockId = container.dataset.modifierWidgetId || "modifier-widget";
-    const group = state.base.modifierGroups?.[blockId] || { title: "Modifier Widget", rows: [] };
+    const group = state.base.modifierGroups?.[blockId] || { title: "Modifier Widget", rows: [], library: [] };
     const tableRows = Array.isArray(group.rows) ? group.rows : [];
+    const libraryRows = Array.isArray(group.library) ? group.library : [];
+    const hiddenActiveCount = tableRows.filter((m) => m.showInOverview === false && m.enabled !== false).length;
     const editingId = state.ui.modifierWidgetGroupId === blockId ? state.ui.modifierWidgetEditingId : null;
     const editing = tableRows.find((m) => m.id === editingId) || null;
-    const rows = tableRows
+    const visibleRows = tableRows.filter((m) => m.showInOverview !== false);
+    const rows = visibleRows
       .map((m) => {
         const effectText = Array.isArray(m.effectsBatches) && m.effectsBatches.length
           ? m.effectsBatches.map((b) => `${b.target || "all"} / ${b.type || "untyped"} / ${b.effect || "0"}`).join(" + ")
           : String(m.effect ?? m.value ?? "");
         return `<div class="modifier-row-card">
           <div class="modifier-row-main">
+            <label class="modifier-onoff">
+              <input type="checkbox" data-mod-enabled-toggle="${m.id}" ${m.enabled === false ? "" : "checked"} />
+            </label>
             <strong>${escapeHtml(m.label || "Modifier")}</strong>
             <span class="muted">${escapeHtml(effectText || "0")}</span>
+            ${
+              m.levelConfig
+                ? `<span class="muted">L${Number(m.level || m.levelConfig?.min || 1)}</span>`
+                : ""
+            }
           </div>
-          <label class="modifier-onoff">
-            <input type="checkbox" data-mod-enabled-toggle="${m.id}" ${m.enabled === false ? "" : "checked"} />
-            <span>${m.enabled === false ? "Off" : "On"}</span>
-          </label>
-          <button type="button" class="custom-widget-edit-btn" data-mod-edit="${m.id}" aria-label="Edit modifier">⚙</button>
+          <div class="modifier-row-actions">
+            <button type="button" class="mini-btn" data-mod-hide-toggle="${m.id}">
+              ${m.showInOverview === false ? "Show" : "Hide"}
+            </button>
+            ${
+              m.levelConfig
+                ? `<button type="button" class="mini-btn" data-mod-level-down="${m.id}" aria-label="Decrease level">−</button>
+                   <button type="button" class="mini-btn" data-mod-level-up="${m.id}" aria-label="Increase level">+</button>`
+                : ""
+            }
+            <button type="button" class="mini-btn" data-mod-up="${m.id}" aria-label="Move modifier up">↑</button>
+            <button type="button" class="mini-btn" data-mod-down="${m.id}" aria-label="Move modifier down">↓</button>
+            ${
+              m.presetKey
+                ? `<button type="button" class="mini-btn" data-mod-row-info-key="${escapeHtml(m.presetKey)}">(i)</button>`
+                : ""
+            }
+          </div>
         </div>`;
       })
       .join("");
@@ -950,7 +1280,7 @@ function renderOverview(state) {
         ];
     const editingEffectInputs = (editingBatches.length ? editingBatches : [{ target: "all", type: "untyped", effect: "0", enabled: true }])
       .map(
-        (fx, i) => `<div class="row modifier-effect-row">
+        (fx, i) => `<div class="row modifier-effect-row" data-mod-effect-row="${i}">
           <label>Affects</label>
           <div class="modifier-affects-grid">
             ${modifierTargets
@@ -968,21 +1298,106 @@ function renderOverview(state) {
             </select>
           </label>
           <label>Effect ${i + 1} <input data-mod-batch-effect="${i}" value="${escapeHtml(String(fx?.effect || ""))}" placeholder="+1 or 1d6" /></label>
-          <button type="button" class="mini-btn" data-mod-del-effect-idx="${i}">Remove</button>
+          <div class="modifier-effect-actions">
+            <button type="button" class="mini-btn" data-mod-move-up-idx="${i}" aria-label="Move effect up">↑</button>
+            <button type="button" class="mini-btn" data-mod-move-down-idx="${i}" aria-label="Move effect down">↓</button>
+            <button type="button" class="mini-btn" data-mod-del-effect-idx="${i}">Remove</button>
+          </div>
         </div>`
       )
       .join("");
+    const presetRows = MODIFIER_PRESETS.map((preset) => {
+      const existing = tableRows.find((m) => m.presetKey === preset.key);
+      const inGroup = Boolean(existing);
+      const searchText = `${preset.label || ""} ${preset.source || ""} ${preset.rulesText || ""}`.toLowerCase();
+      return `<div class="modifier-preset-row" data-mod-preset-search-text="${escapeHtml(searchText)}">
+        <div class="modifier-preset-main">
+          <strong>${escapeHtml(preset.label)}</strong>
+          <span class="muted">${escapeHtml(preset.source || "")}</span>
+        </div>
+        <div class="modifier-preset-actions">
+          <button type="button" class="mini-btn" data-mod-preset-toggle="${escapeHtml(preset.key)}">
+            ${inGroup ? "Disable" : "Enable"}
+          </button>
+          ${
+            inGroup
+              ? `<button type="button" class="mini-btn" data-mod-visibility-toggle="${escapeHtml(existing.id)}">${
+                  existing.showInOverview === false ? "Show" : "Hide"
+                }</button>`
+              : ""
+          }
+          ${inGroup ? `<button type="button" class="mini-btn" data-mod-open-settings="${escapeHtml(existing.id)}">⚙</button>` : ""}
+          <button type="button" class="mini-btn" data-mod-info-key="${escapeHtml(preset.key)}">(i)</button>
+        </div>
+      </div>`;
+    }).join("");
+    const activeConditionInfo =
+      state.ui.conditionInfoOpen && state.ui.conditionInfoGroupId === blockId
+        ? MODIFIER_PRESETS.find((p) => p.key === state.ui.conditionInfoKey)
+        : null;
+    const customActivationRows = libraryRows
+      .map((entry) => {
+        const existing = tableRows.find((m) => m.customDefId === entry.id);
+        const inGroup = Boolean(existing);
+        return `<div class="modifier-preset-row">
+          <div class="modifier-preset-main">
+            <strong>${escapeHtml(entry.label || "Custom Modifier")}</strong>
+            <span class="muted">${escapeHtml(entry.effect || "0")}</span>
+          </div>
+          <div class="modifier-preset-actions">
+            <button type="button" class="mini-btn" data-mod-custom-toggle="${escapeHtml(entry.id)}">
+              ${inGroup ? "Disable" : "Enable"}
+            </button>
+            ${
+              inGroup
+                ? `<button type="button" class="mini-btn" data-mod-visibility-toggle="${escapeHtml(existing.id)}">${
+                    existing.showInOverview === false ? "Show" : "Hide"
+                  }</button>`
+                : ""
+            }
+            ${inGroup ? `<button type="button" class="mini-btn" data-mod-open-settings="${escapeHtml(existing.id)}">⚙</button>` : ""}
+            <button type="button" class="mini-btn danger-btn" data-mod-custom-delete="${escapeHtml(entry.id)}">Delete</button>
+          </div>
+        </div>`;
+      })
+      .join("");
     container.innerHTML = `
-      <div class="custom-widgets-header-row">
+      <div class="custom-widgets-header-row widget-head-row">
         <p class="section-header">${escapeHtml(group.title || "Modifier Widget")}</p>
-      </div>
-      <div class="custom-widgets-toolbar">
-        <button type="button" data-mod-add-btn="${escapeHtml(blockId)}">Add</button>
+        <div class="widget-head-actions">
+          <button type="button" class="mini-btn" data-mod-view-btn="${escapeHtml(blockId)}" title="Modifier list">+</button>
+          <button type="button" class="mini-btn" data-mod-show-hidden-btn="${escapeHtml(blockId)}" ${hiddenActiveCount ? "" : "disabled"} title="Show hidden active modifiers">Show Hidden${
+            hiddenActiveCount ? ` (${hiddenActiveCount})` : ""
+          }</button>
+          <button type="button" class="mini-btn" data-mod-add-btn="${escapeHtml(blockId)}" title="Create modifier">New</button>
+        </div>
       </div>
       <div class="modifier-list-wrap">${rows || `<p class="muted">No modifiers yet.</p>`}</div>
+      <div class="weapon-editor-popup ${state.ui.modifierPresetBrowserOpen && state.ui.modifierPresetGroupId === blockId ? "" : "hidden"}" id="mod-preset-browser">
+        <div class="weapon-editor-card">
+          <p class="section-header">Activate Modifiers</p>
+          <p class="muted">Enable defaults and created modifiers for this widget.</p>
+          <div class="row">
+            <label>Search conditions
+              <input id="mod-preset-search" placeholder="e.g. frightened, off-guard, ac..." />
+            </label>
+          </div>
+          <div class="modifier-preset-list">${presetRows}</div>
+          ${customActivationRows ? `<p class="section-header">Created Modifiers</p><div class="modifier-preset-list">${customActivationRows}</div>` : `<p class="muted">No created modifiers yet.</p>`}
+          <div class="row"><button type="button" id="mod-preset-close-btn">Close</button></div>
+        </div>
+      </div>
+      <div class="weapon-editor-popup ${activeConditionInfo ? "" : "hidden"}" id="mod-condition-info-popup">
+        <div class="weapon-editor-card">
+          <p class="section-header">${escapeHtml(activeConditionInfo?.label || "Condition")}</p>
+          <p class="muted">${escapeHtml(activeConditionInfo?.source || "")}</p>
+          <div class="condition-info-body">${escapeHtml(activeConditionInfo?.rulesText || "").replace(/\n/g, "<br />")}</div>
+          <div class="row"><button type="button" id="mod-condition-info-close-btn">Close</button></div>
+        </div>
+      </div>
       <div class="weapon-editor-popup ${state.ui.modifierWidgetEditorOpen && state.ui.modifierWidgetGroupId === blockId ? "" : "hidden"}">
         <div class="weapon-editor-card">
-          <p class="section-header">${editing ? "Edit Modifier" : "Add Modifier"}</p>
+          <p class="section-header">${editing ? "Edit Modifier" : "Create Modifier"}</p>
           <div class="row"><label>Widget name <input id="mod-widget-name" value="${escapeHtml(group.title || "Modifier Widget")}" /></label></div>
           <div class="row"><label>Name <input id="mod-name" value="${escapeHtml(editing?.label || "")}" /></label></div>
           <p class="section-header">Effects</p>
@@ -990,6 +1405,7 @@ function renderOverview(state) {
           <div class="row"><button type="button" id="mod-add-effect-btn">Add Effect</button></div>
           <div class="row"><label>Enabled <input id="mod-enabled" type="checkbox" ${editing?.enabled === false ? "" : "checked"} /></label></div>
           <div class="row"><button type="button" id="mod-save-btn">Save</button><button type="button" id="mod-cancel-btn">Cancel</button></div>
+          ${editing ? `<div class="row widget-delete-row"><button type="button" id="mod-delete-btn" class="danger-btn">Delete Modifier</button></div>` : ""}
         </div>
       </div>
     `;
@@ -998,14 +1414,165 @@ function renderOverview(state) {
         draft.ui.modifierWidgetEditorOpen = true;
         draft.ui.modifierWidgetEditingId = null;
         draft.ui.modifierWidgetGroupId = blockId;
+        draft.ui.modifierPresetBrowserOpen = false;
+        draft.ui.conditionInfoOpen = false;
+        draft.ui.conditionInfoKey = "";
       });
     });
-    container.querySelectorAll("[data-mod-edit]").forEach((btn) => {
+    container.querySelector("[data-mod-view-btn]")?.addEventListener("click", () => {
+      store.patch((draft) => {
+        draft.ui.modifierPresetBrowserOpen = true;
+        draft.ui.modifierPresetGroupId = blockId;
+        draft.ui.modifierWidgetEditorOpen = false;
+        draft.ui.modifierWidgetEditingId = null;
+        draft.ui.conditionInfoOpen = false;
+        draft.ui.conditionInfoKey = "";
+      });
+    });
+    container.querySelector("[data-mod-show-hidden-btn]")?.addEventListener("click", () => {
+      store.patch((draft) => {
+        const rowsNow = draft.base.modifierGroups?.[blockId]?.rows || [];
+        rowsNow.forEach((row) => {
+          if (row.enabled !== false && row.showInOverview === false) row.showInOverview = true;
+        });
+      });
+    });
+    container.querySelector("#mod-preset-close-btn")?.addEventListener("click", () => {
+      store.patch((draft) => {
+        draft.ui.modifierPresetBrowserOpen = false;
+      });
+    });
+    const presetSearchInput = container.querySelector("#mod-preset-search");
+    const applyPresetFilter = () => {
+      const needle = String(presetSearchInput?.value || "").trim().toLowerCase();
+      container.querySelectorAll(".modifier-preset-row").forEach((rowEl) => {
+        const hay = String(rowEl.dataset.modPresetSearchText || "");
+        rowEl.classList.toggle("hidden", Boolean(needle) && !hay.includes(needle));
+      });
+    };
+    presetSearchInput?.addEventListener("input", applyPresetFilter);
+    applyPresetFilter();
+    container.querySelector("#mod-condition-info-close-btn")?.addEventListener("click", () => {
+      store.patch((draft) => {
+        draft.ui.conditionInfoOpen = false;
+        draft.ui.conditionInfoKey = "";
+      });
+    });
+    container.querySelectorAll("[data-mod-info-key]").forEach((btn) => {
       btn.addEventListener("click", () => {
+        const key = btn.dataset.modInfoKey;
+        if (!key) return;
         store.patch((draft) => {
-          draft.ui.modifierWidgetEditorOpen = true;
-          draft.ui.modifierWidgetEditingId = btn.dataset.modEdit;
-          draft.ui.modifierWidgetGroupId = blockId;
+          draft.ui.conditionInfoOpen = true;
+          draft.ui.conditionInfoGroupId = blockId;
+          draft.ui.conditionInfoKey = key;
+        });
+      });
+    });
+    container.querySelectorAll("[data-mod-row-info-key]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.modRowInfoKey;
+        if (!key) return;
+        store.patch((draft) => {
+          draft.ui.conditionInfoOpen = true;
+          draft.ui.conditionInfoGroupId = blockId;
+          draft.ui.conditionInfoKey = key;
+          draft.ui.modifierPresetBrowserOpen = false;
+        });
+      });
+    });
+    container.querySelectorAll("[data-mod-preset-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.modPresetToggle;
+        const preset = MODIFIER_PRESETS.find((p) => p.key === key);
+        if (!preset) return;
+        store.patch((draft) => {
+          draft.base.modifierGroups = draft.base.modifierGroups || {};
+          draft.base.modifierGroups[blockId] = draft.base.modifierGroups[blockId] || { title: "Modifier Widget", rows: [], library: [] };
+          const rowsNow = draft.base.modifierGroups[blockId].rows || [];
+          const existing = rowsNow.find((m) => m.presetKey === preset.key);
+          if (existing) {
+            draft.base.modifierGroups[blockId].rows = rowsNow.filter((m) => m.presetKey !== preset.key);
+            if (draft.ui.modifierWidgetEditingId === existing.id) {
+              draft.ui.modifierWidgetEditingId = null;
+              draft.ui.modifierWidgetEditorOpen = false;
+            }
+            return;
+          }
+          const effectsBatches = structuredClone(preset.effectsTemplate || []);
+          const newRow = {
+            id: uid(),
+            presetKey: preset.key,
+            label: preset.label,
+            effectsBatches,
+            effect: effectsBatches.map((e) => e.effect || "0").join(" + "),
+            value: 0,
+            enabled: false,
+            showInOverview: true,
+          };
+          if (preset.levelConfig) {
+            newRow.levelConfig = { ...preset.levelConfig, baseLabel: preset.label };
+            applyPresetLevelToRow(newRow, preset.levelConfig.default || preset.levelConfig.min || 1);
+          } else {
+            newRow.value = effectsBatches.reduce((sum, e) => {
+              const n = Number(e.effect);
+              return sum + (Number.isFinite(n) ? n : 0);
+            }, 0);
+          }
+          rowsNow.push(newRow);
+          draft.base.modifierGroups[blockId].rows = rowsNow;
+        });
+      });
+    });
+    container.querySelectorAll("[data-mod-custom-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.modCustomToggle;
+        if (!id) return;
+        store.patch((draft) => {
+          draft.base.modifierGroups = draft.base.modifierGroups || {};
+          draft.base.modifierGroups[blockId] = draft.base.modifierGroups[blockId] || {
+            title: "Modifier Widget",
+            rows: [],
+            library: [],
+          };
+          const g = draft.base.modifierGroups[blockId];
+          const rowsNow = g.rows || [];
+          const existing = rowsNow.find((m) => m.customDefId === id);
+          if (existing) {
+            g.rows = rowsNow.filter((m) => m.customDefId !== id);
+            return;
+          }
+          const def = (g.library || []).find((x) => x.id === id);
+          if (!def) return;
+          const effectsBatches = structuredClone(def.effectsBatches || []);
+          const numericTotal = effectsBatches.reduce((sum, e) => {
+            const n = Number(e.effect);
+            return sum + (Number.isFinite(n) ? n : 0);
+          }, 0);
+          rowsNow.push({
+            id: uid(),
+            customDefId: id,
+            label: def.label || "Custom Modifier",
+            effectsBatches,
+            effect: effectsBatches.map((e) => e.effect).join(" + "),
+            value: numericTotal,
+            enabled: false,
+            showInOverview: true,
+          });
+          g.rows = rowsNow;
+        });
+      });
+    });
+    container.querySelectorAll("[data-mod-custom-delete]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.modCustomDelete;
+        if (!id) return;
+        if (!window.confirm("Delete this created modifier from Activate list?")) return;
+        store.patch((draft) => {
+          const g = draft.base.modifierGroups?.[blockId];
+          if (!g) return;
+          g.library = (g.library || []).filter((x) => x.id !== id);
+          g.rows = (g.rows || []).filter((m) => m.customDefId !== id);
         });
       });
     });
@@ -1019,10 +1586,85 @@ function renderOverview(state) {
         });
       });
     });
+    container.querySelectorAll("[data-mod-hide-toggle],[data-mod-visibility-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.modHideToggle || btn.dataset.modVisibilityToggle;
+        if (!id) return;
+        store.patch((draft) => {
+          const g = draft.base.modifierGroups?.[blockId];
+          const row = (g?.rows || []).find((m) => m.id === id);
+          if (!row) return;
+          row.showInOverview = row.showInOverview === false ? true : false;
+        });
+      });
+    });
+    container.querySelectorAll("[data-mod-up],[data-mod-down]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.modUp || btn.dataset.modDown;
+        const dir = btn.dataset.modUp ? -1 : 1;
+        if (!id) return;
+        store.patch((draft) => {
+          const g = draft.base.modifierGroups?.[blockId];
+          if (!g || !Array.isArray(g.rows)) return;
+          const rowsNow = g.rows;
+          const idx = rowsNow.findIndex((m) => m.id === id);
+          const nextIdx = idx + dir;
+          if (idx < 0 || nextIdx < 0 || nextIdx >= rowsNow.length) return;
+          const tmp = rowsNow[idx];
+          rowsNow[idx] = rowsNow[nextIdx];
+          rowsNow[nextIdx] = tmp;
+          g.rows = rowsNow;
+        });
+      });
+    });
+    container.querySelectorAll("[data-mod-level-up],[data-mod-level-down]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.modLevelUp || btn.dataset.modLevelDown;
+        const dir = btn.dataset.modLevelUp ? 1 : -1;
+        if (!id) return;
+        store.patch((draft) => {
+          const g = draft.base.modifierGroups?.[blockId];
+          const row = (g?.rows || []).find((m) => m.id === id);
+          if (!row || !row.levelConfig) return;
+          const min = Number(row.levelConfig.min || 1);
+          const max = Number(row.levelConfig.max || min);
+          const next = Math.max(min, Math.min(max, Number(row.level || min) + dir));
+          applyPresetLevelToRow(row, next);
+        });
+      });
+    });
+    container.querySelectorAll("[data-mod-open-settings]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.modOpenSettings;
+        if (!id) return;
+        store.patch((draft) => {
+          draft.ui.modifierWidgetEditorOpen = true;
+          draft.ui.modifierWidgetEditingId = id;
+          draft.ui.modifierWidgetGroupId = blockId;
+          draft.ui.modifierPresetBrowserOpen = true;
+          draft.ui.modifierPresetGroupId = blockId;
+          draft.ui.conditionInfoOpen = false;
+          draft.ui.conditionInfoKey = "";
+        });
+      });
+    });
     container.querySelector("#mod-cancel-btn")?.addEventListener("click", () => {
       store.patch((draft) => {
         draft.ui.modifierWidgetEditorOpen = false;
         draft.ui.modifierWidgetEditingId = null;
+        draft.ui.modifierWidgetGroupId = blockId;
+      });
+    });
+    container.querySelector("#mod-delete-btn")?.addEventListener("click", () => {
+      const id = store.getState().ui.modifierWidgetEditingId;
+      if (!id) return;
+      if (!window.confirm("Delete this modifier? This cannot be undone.")) return;
+      store.patch((draft) => {
+        const g = draft.base.modifierGroups?.[blockId];
+        if (!g || !Array.isArray(g.rows)) return;
+        g.rows = g.rows.filter((m) => m.id !== id);
+        draft.ui.modifierWidgetEditingId = null;
+        draft.ui.modifierWidgetEditorOpen = false;
         draft.ui.modifierWidgetGroupId = blockId;
       });
     });
@@ -1044,7 +1686,7 @@ function renderOverview(state) {
       const enabled = Boolean(container.querySelector("#mod-enabled")?.checked);
       store.patch((draft) => {
         draft.base.modifierGroups = draft.base.modifierGroups || {};
-        draft.base.modifierGroups[blockId] = draft.base.modifierGroups[blockId] || { title: "Modifier Widget", rows: [] };
+        draft.base.modifierGroups[blockId] = draft.base.modifierGroups[blockId] || { title: "Modifier Widget", rows: [], library: [] };
         draft.base.modifierGroups[blockId].title = String(widgetName || "Modifier Widget");
         const rowsNow = draft.base.modifierGroups[blockId].rows || [];
         const id = draft.ui.modifierWidgetEditingId;
@@ -1059,14 +1701,18 @@ function renderOverview(state) {
           existing.effect = effectsBatches.map((e) => e.effect).join(" + ");
           existing.value = numericTotal;
           existing.enabled = enabled;
+          if (existing.levelConfig) {
+            existing.levelConfig.baseLabel = name || existing.levelConfig.baseLabel || "Condition";
+            applyPresetLevelToRow(existing, Number(existing.level || existing.levelConfig.min || 1));
+          }
         } else {
-          rowsNow.push({
+          const g = draft.base.modifierGroups[blockId];
+          g.library = g.library || [];
+          g.library.push({
             id: uid(),
-            label: name,
+            label: name || "Custom Modifier",
             effectsBatches,
             effect: effectsBatches.map((e) => e.effect).join(" + "),
-            value: numericTotal,
-            enabled,
           });
         }
         draft.base.modifierGroups[blockId].rows = rowsNow;
@@ -1075,12 +1721,17 @@ function renderOverview(state) {
         draft.ui.modifierWidgetGroupId = blockId;
       });
     });
-    container.querySelector(".weapon-editor-popup")?.addEventListener("click", (event) => {
-      if (!event.target.classList.contains("weapon-editor-popup")) return;
-      store.patch((draft) => {
-        draft.ui.modifierWidgetEditorOpen = false;
-        draft.ui.modifierWidgetEditingId = null;
-        draft.ui.modifierWidgetGroupId = blockId;
+    container.querySelectorAll(".weapon-editor-popup").forEach((overlay) => {
+      overlay.addEventListener("click", (event) => {
+        if (!event.target.classList.contains("weapon-editor-popup")) return;
+        store.patch((draft) => {
+          draft.ui.modifierWidgetEditorOpen = false;
+          draft.ui.modifierWidgetEditingId = null;
+          draft.ui.modifierWidgetGroupId = blockId;
+          draft.ui.modifierPresetBrowserOpen = false;
+          draft.ui.conditionInfoOpen = false;
+          draft.ui.conditionInfoKey = "";
+        });
       });
     });
     container.querySelector("#mod-add-effect-btn")?.addEventListener("click", () => {
@@ -1106,13 +1757,39 @@ function renderOverview(state) {
         </select>
       </label>
       <label>Effect ${nextIdx + 1} <input data-mod-batch-effect="${nextIdx}" placeholder="+1 or 1d6" /></label>
+      <button type="button" class="mini-btn" data-mod-move-up-idx="${nextIdx}" aria-label="Move effect up">↑</button>
+      <button type="button" class="mini-btn" data-mod-move-down-idx="${nextIdx}" aria-label="Move effect down">↓</button>
       <button type="button" class="mini-btn" data-mod-del-effect-idx="${nextIdx}">Remove</button>`;
       holder.appendChild(row);
       row.querySelector("[data-mod-del-effect-idx]")?.addEventListener("click", () => row.remove());
+      row.querySelector("[data-mod-move-up-idx]")?.addEventListener("click", () => {
+        const current = row;
+        const prev = current.previousElementSibling;
+        if (prev) prev.before(current);
+      });
+      row.querySelector("[data-mod-move-down-idx]")?.addEventListener("click", () => {
+        const current = row;
+        const next = current.nextElementSibling;
+        if (next) next.after(current);
+      });
     });
     container.querySelectorAll("[data-mod-del-effect-idx]").forEach((btn) => {
       btn.addEventListener("click", () => {
         btn.closest(".modifier-effect-row")?.remove();
+      });
+    });
+    container.querySelectorAll("[data-mod-move-up-idx]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const row = btn.closest(".modifier-effect-row");
+        const prev = row?.previousElementSibling;
+        if (row && prev) prev.before(row);
+      });
+    });
+    container.querySelectorAll("[data-mod-move-down-idx]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const row = btn.closest(".modifier-effect-row");
+        const next = row?.nextElementSibling;
+        if (row && next) next.after(row);
       });
     });
   });
@@ -1129,9 +1806,13 @@ function renderOverview(state) {
     const blockId = el.dataset.weaponWidgetId || "weapon-widget";
     const widget = structuredClone(state.weaponWidgets?.[blockId] || state.weaponWidgets?.["weapon-widget"] || defaultWeapon);
     const attackGroupName = String(widget.groupName || "Attack Widget").trim() || "Attack Widget";
-    const attackBonusTotal = (widget.attackBonuses || []).filter((b) => b.on).reduce((sum, b) => sum + Number(b.bonus || 0), 0);
+    const attackBonusTotal = (widget.attackBonuses || [])
+      .filter((b) => b.alwaysOn || b.on)
+      .reduce((sum, b) => sum + Number(b.bonus || 0), 0);
+    const attackModTotal = summarizeModifiers(modifierRowsFlat, "attack").total;
+    const damageModTotal = summarizeModifiers(modifierRowsFlat, "damage").total;
     const strikeBase =
-      weaponStrikeBase(state, widget) + attackBonusTotal + summarizeModifiers(modifierRowsFlat, "attack").total;
+      weaponStrikeBase(state, widget) + attackBonusTotal + attackModTotal;
     const mapStep = Math.max(0, Number(widget.mapPenalty ?? 5));
     const strikeBonuses = [strikeBase, strikeBase - mapStep, strikeBase - 2 * mapStep];
     const strikeLabels = ["1st", "2nd", "3rd"];
@@ -1140,7 +1821,7 @@ function renderOverview(state) {
     const attackRows = strikeBonuses
       .map(
         (bonus, i) => `
-        <button type="button" class="weapon-roll-btn" data-roll-name="${escapeHtml(widget.name)} Strike (${strikeLabels[i]})" data-roll-bonus="${bonus}">${fmtAtk(
+        <button type="button" class="weapon-roll-btn ${modTone(attackModTotal)}" data-roll-name="${escapeHtml(widget.name)} Strike (${strikeLabels[i]})" data-roll-bonus="${bonus}">${fmtAtk(
           bonus
         )}</button>
       `
@@ -1155,6 +1836,7 @@ function renderOverview(state) {
     const hitLabel = escapeHtml(widget.damages?.[0]?.label || "Damage");
     const critLabel = escapeHtml(widget.damages?.[1]?.label || "Critical");
     const toggleRows = (widget.damageToggles || [])
+      .filter((t) => !t.alwaysOn)
       .map(
         (t) => `
         <label class="weapon-toggle">
@@ -1165,6 +1847,7 @@ function renderOverview(state) {
       )
       .join("");
     const attackToggleRows = (widget.attackBonuses || [])
+      .filter((b) => !b.alwaysOn)
       .map(
         (b) => `
         <label class="weapon-toggle">
@@ -1183,6 +1866,9 @@ function renderOverview(state) {
         <div class="weapon-bonus-row">
           <label>Label <input data-ww-kind="damageToggle" data-ww-id="${t.id}" data-ww-field="label" value="${escapeHtml(t.label)}" /></label>
           <label>Bonus dice <input data-ww-kind="damageToggle" data-ww-id="${t.id}" data-ww-field="formula" value="${escapeHtml(t.formula)}" placeholder="e.g. 2d6 or +4" /></label>
+          <label class="weapon-toggle-inline"><input type="checkbox" data-ww-kind="damageToggle" data-ww-id="${t.id}" data-ww-field="alwaysOn" ${
+            t.alwaysOn ? "checked" : ""
+          } /> always on</label>
           <label class="weapon-toggle-inline"><input type="checkbox" data-ww-kind="damageToggle" data-ww-id="${t.id}" data-ww-field="multiplyOnCrit" ${
             t.multiplyOnCrit !== false ? "checked" : ""
           } /> x2 on crit</label>
@@ -1197,9 +1883,9 @@ function renderOverview(state) {
         <div class="weapon-bonus-row">
           <label>Label <input data-ww-atk-bonus-id="${b.id}" data-ww-field="label" value="${escapeHtml(b.label)}" /></label>
           <label>Bonus <input data-ww-atk-bonus-id="${b.id}" data-ww-field="bonus" type="number" value="${Number(b.bonus || 0)}" /></label>
-          <label class="weapon-toggle-inline"><input type="checkbox" data-ww-atk-bonus-id="${b.id}" data-ww-field="on" ${
-            b.on ? "checked" : ""
-          } /> active</label>
+          <label class="weapon-toggle-inline"><input type="checkbox" data-ww-atk-bonus-id="${b.id}" data-ww-field="alwaysOn" ${
+            b.alwaysOn ? "checked" : ""
+          } /> always on</label>
           <button type="button" class="weapon-del-toggle-btn" data-ww-del-atk-bonus="${escapeHtml(b.id)}">Remove</button>
         </div>
       `
@@ -1215,8 +1901,8 @@ function renderOverview(state) {
       ${attackToggleRows ? `<div class="weapon-damage-toggles">${attackToggleRows}</div>` : ""}
       <div class="weapon-attacks row">${attackRows}</div>
       <div class="weapon-damage row">
-        <button type="button" class="weapon-roll-btn weapon-damage-main-btn" data-roll-name="${escapeHtml(widget.name)} ${hitLabel}" data-roll-formula="${escapeHtml(hitFormula)}">Damage</button>
-        <button type="button" class="weapon-roll-btn weapon-crit-mini-btn" title="${escapeHtml(
+        <button type="button" class="weapon-roll-btn weapon-damage-main-btn ${modTone(damageModTotal)}" data-roll-name="${escapeHtml(widget.name)} ${hitLabel}" data-roll-formula="${escapeHtml(hitFormula)}">Damage</button>
+        <button type="button" class="weapon-roll-btn weapon-crit-mini-btn ${modTone(damageModTotal)}" title="${escapeHtml(
           `${critLabel}: ${critFormula}`
         )}" aria-label="${escapeHtml(critLabel)}" data-roll-name="${escapeHtml(widget.name)} ${critLabel}" data-roll-formula="${escapeHtml(critFormula)}">Critical</button>
       </div>
@@ -1309,6 +1995,16 @@ function renderOverview(state) {
   document.querySelector("#strip-raise-shield")?.addEventListener("change", (event) => {
     store.patch((draft) => {
       draft.base.toggles.raiseShield = Boolean(event.currentTarget.checked);
+    });
+  });
+  document.querySelector("#strip-raise-shield-settings-btn")?.addEventListener("click", () => {
+    store.patch((draft) => {
+      draft.ui.shieldSettingsOpen = !draft.ui.shieldSettingsOpen;
+    });
+  });
+  document.querySelector("#strip-raise-shield-bonus")?.addEventListener("change", (event) => {
+    store.patch((draft) => {
+      draft.base.toggles.raiseShieldBonus = Math.max(0, Number(event.currentTarget.value || 0));
     });
   });
 
@@ -1456,6 +2152,7 @@ function renderOverview(state) {
           label: "Bonus",
           formula: "1d6",
           on: false,
+          alwaysOn: false,
           multiplyOnCrit: true,
         });
       });
@@ -1494,6 +2191,7 @@ function renderOverview(state) {
           label: "Attack bonus",
           bonus: 1,
           on: true,
+          alwaysOn: false,
         });
       });
     });
@@ -1564,10 +2262,12 @@ function renderOverview(state) {
       })
       .join("");
     container.innerHTML = `
-      <div class="custom-widgets-header-row">
+      <div class="custom-widgets-header-row widget-head-row">
         <p class="section-header">${escapeHtml(group.title || "Flex Widget")}</p>
+        <div class="widget-head-actions">
+          <button type="button" id="cw-add-btn" class="mini-btn" title="Add Ability">+</button>
+        </div>
       </div>
-      <div class="custom-widgets-toolbar"><button type="button" id="cw-add-btn">Add Ability</button></div>
       <div>${widgetRows || `<p class="muted">No custom widgets yet.</p>`}</div>
       <div class="weapon-editor-popup ${state.ui.customWidgetEditorOpen && state.ui.customWidgetGroupId === groupId ? "" : "hidden"}">
         <div class="weapon-editor-card">
@@ -1710,13 +2410,15 @@ function renderOverview(state) {
         const formula = btn.dataset.cwRollFormula || "";
         try {
           const vars = resolveVariableMap(store.getState());
-          const resolved = evaluateExpression(formula, (name) => vars[String(name || "").toLowerCase()]);
+          const resolver = (name) => vars[String(name || "").toLowerCase()];
+          const resolvedLabel = expandTemplate(label, resolver);
+          const resolved = evaluateExpression(formula, resolver);
           const { total, breakdown } = rollDiceExpression(resolved);
           const widgetName =
             (store.getState().widgetGroups?.[groupId]?.widgets || []).find((w) => w.id === wid)?.title || "Widget";
           addRollLog(
             {
-              name: `${widgetName}: ${label}`,
+              name: `${widgetName}: ${resolvedLabel}`,
               message: `${total} (${breakdown.join(", ")}${resolved !== formula ? `; ${resolved}` : ""})`,
             },
             false
@@ -1785,51 +2487,36 @@ document.querySelectorAll(".tab-btn").forEach((tab) => {
   });
 });
 
-root.exportBtn?.addEventListener("click", () => {
-  const state = store.getState();
-  const exportState = structuredClone(state);
-  exportState.saveMeta = exportState.saveMeta || {};
-  if (!exportState.saveMeta.saveId) exportState.saveMeta.saveId = uid();
-  if (!exportState.saveMeta.saveName) exportState.saveMeta.saveName = "New Save";
-  const json = JSON.stringify(exportState, null, 2);
-  const blob = new Blob([json], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const safeName = String(exportState.saveMeta.saveName || "save")
-    .trim()
-    .replace(/[^a-z0-9-_]+/gi, "_")
-    .slice(0, 40);
-  const fname = `${safeName || "save"}_${exportState.saveMeta.saveId}.json`;
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fname;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  addRollLog(`Exported ${fname}`, false);
-});
+function closeManageCharactersPopup() {
+  if (!root.manageCharactersPopup || !root.manageCharactersBtn) return;
+  root.manageCharactersPopup.classList.remove("open");
+  root.manageCharactersPopup.setAttribute("aria-hidden", "true");
+  root.manageCharactersBtn.setAttribute("aria-expanded", "false");
+}
 
-root.charactersBtn?.addEventListener("click", () => {
+function toggleCharacterManagerOpen() {
   store.patch((draft) => {
     draft.ui.characterManagerOpen = !draft.ui.characterManagerOpen;
   });
-});
+}
 
-root.charactersClose?.addEventListener("click", () => {
-  store.patch((draft) => {
-    draft.ui.characterManagerOpen = false;
-  });
-});
-
-root.newCharacterBtn?.addEventListener("click", () => {
+function createNewCharacter() {
   const fresh = createInitialState();
+  const proposed = window.prompt("Name for new character:", "Character");
+  const name = String(proposed ?? "").trim();
+  if (proposed !== null && name) {
+    fresh.base = fresh.base || {};
+    fresh.base.characterName = name;
+    fresh.saveMeta = fresh.saveMeta || {};
+    fresh.saveMeta.saveName = name;
+  }
   store.patch((draft) => {
     Object.assign(draft, fresh);
   });
-  addRollLog("Created new character.", false);
-});
+  addRollLog(`Created new character: ${fresh.base?.characterName || fresh.saveMeta?.saveName || "Character"}`, false);
+}
 
-root.importBtn?.addEventListener("click", () => {
+function importCharacter() {
   const picker = document.createElement("input");
   picker.type = "file";
   picker.accept = ".json,application/json";
@@ -1852,6 +2539,90 @@ root.importBtn?.addEventListener("click", () => {
     }
   });
   picker.click();
+}
+
+function exportCharacter() {
+  const state = store.getState();
+  const exportState = structuredClone(state);
+  exportState.saveMeta = exportState.saveMeta || {};
+  if (!exportState.saveMeta.saveId) exportState.saveMeta.saveId = uid();
+  if (!exportState.saveMeta.saveName) exportState.saveMeta.saveName = "New Save";
+  const json = JSON.stringify(exportState, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const safeName = String(exportState.saveMeta.saveName || "save")
+    .trim()
+    .replace(/[^a-z0-9-_]+/gi, "_")
+    .slice(0, 40);
+  const fname = `${safeName || "save"}_${exportState.saveMeta.saveId}.json`;
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  addRollLog(`Exported ${fname}`, false);
+}
+
+root.manageCharactersBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (!root.manageCharactersPopup) return;
+  const isOpen = root.manageCharactersPopup.classList.toggle("open");
+  root.manageCharactersPopup.setAttribute("aria-hidden", String(!isOpen));
+  root.manageCharactersBtn?.setAttribute("aria-expanded", String(isOpen));
+});
+
+root.manageCharactersOpenBtn?.addEventListener("click", () => {
+  toggleCharacterManagerOpen();
+});
+
+root.manageImportBtn?.addEventListener("click", () => {
+  importCharacter();
+});
+
+root.manageExportBtn?.addEventListener("click", () => {
+  exportCharacter();
+});
+
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!target || !root.manageCharactersPopup) return;
+  if (target instanceof Element && target.closest(".manage-menu-wrap")) return;
+  closeManageCharactersPopup();
+});
+
+root.charactersClose?.addEventListener("click", () => {
+  store.patch((draft) => {
+    draft.ui.characterManagerOpen = false;
+  });
+});
+
+root.charactersNewBtn?.addEventListener("click", () => {
+  createNewCharacter();
+});
+
+root.charactersSaveAsBtn?.addEventListener("click", () => {
+  const current = store.getState();
+  const currentName = String(current.base?.characterName || current.saveMeta?.saveName || "Character");
+  const proposed = window.prompt("Save current character as:", `${currentName} Copy`);
+  const nextName = String(proposed ?? "").trim();
+  if (proposed == null || !nextName) return;
+  const cloned = structuredClone(current);
+  cloned.base = cloned.base || {};
+  cloned.base.characterName = nextName;
+  cloned.saveMeta = cloned.saveMeta || {};
+  cloned.saveMeta.saveId = uid();
+  cloned.saveMeta.saveName = nextName;
+  saveState(cloned);
+  store.patch((draft) => {
+    draft.base = draft.base || {};
+    draft.base.characterName = nextName;
+    draft.saveMeta = draft.saveMeta || {};
+    draft.saveMeta.saveId = cloned.saveMeta.saveId;
+    draft.saveMeta.saveName = nextName;
+  });
+  addRollLog(`Saved as: ${nextName}`, false);
 });
 
 root.overviewEditBtn?.addEventListener("click", () => {

@@ -68,6 +68,54 @@ export function summarizeModifiers(modifiers = [], target = "all") {
   };
 }
 
+export function explainModifiers(modifiers = [], target = "all") {
+  const rows = Array.isArray(modifiers) ? modifiers : [];
+  const want = normalizeTarget(target);
+  const typedBestBonus = new Map();
+  const typedWorstPenalty = new Map();
+  const untypedApplied = [];
+
+  for (const row of rows) {
+    if (!row || row.enabled === false) continue;
+    const targets = targetList(row);
+    if (!(targets.includes("all") || targets.includes(want))) continue;
+    const type = normalizeModifierType(row.type);
+    const effectText = String(row.effect ?? row.value ?? "").trim();
+    const value = Number(effectText);
+    if (!Number.isFinite(value) || value === 0) continue;
+
+    const payload = {
+      id: row.id || "",
+      label: String(row.label || "Modifier"),
+      effect: value,
+      type,
+      targets,
+      hidden: row.showInOverview === false,
+    };
+
+    if (type === "untyped") {
+      untypedApplied.push(payload);
+      continue;
+    }
+
+    if (value > 0) {
+      const prev = typedBestBonus.get(type);
+      if (!prev || value > prev.effect) typedBestBonus.set(type, payload);
+    } else {
+      const prev = typedWorstPenalty.get(type);
+      if (!prev || value < prev.effect) typedWorstPenalty.set(type, payload);
+    }
+  }
+
+  const applied = [
+    ...typedBestBonus.values(),
+    ...typedWorstPenalty.values(),
+    ...untypedApplied,
+  ];
+  const total = applied.reduce((sum, item) => sum + Number(item.effect || 0), 0);
+  return { total, applied };
+}
+
 export function selectModifierEffects(modifiers = [], target = "all") {
   const rows = Array.isArray(modifiers) ? modifiers : [];
   const want = normalizeTarget(target);

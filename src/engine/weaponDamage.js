@@ -12,7 +12,7 @@ function mergeTerms(base, extras) {
 }
 
 function activeToggles(widget) {
-  return (widget.damageToggles || []).filter((t) => t.on);
+  return (widget.damageToggles || []).filter((t) => t.alwaysOn || t.on);
 }
 
 function toggleCritTerms(widget) {

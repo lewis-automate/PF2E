@@ -39,6 +39,34 @@ body {
   display: flex;
   gap: 0.5rem;
   justify-self: end;
+  align-items: center;
+}
+
+.manage-menu-wrap {
+  position: relative;
+}
+
+.manage-menu-popup {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  min-width: 12rem;
+  display: none;
+  background: #1a1f2b;
+  border: 1px solid #30384d;
+  border-radius: 8px;
+  padding: 0.35rem;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  z-index: 1200;
+}
+
+.manage-menu-popup.open {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.manage-menu-popup button {
+  text-align: left;
 }
 
 .header-left {
@@ -291,16 +319,26 @@ button:hover {
   border: 1px solid #2f3338;
   border-radius: 8px;
   padding: 0.4rem 0.5rem;
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 0.55rem;
+  display: flex;
   align-items: center;
+  gap: 0.55rem;
 }
 
 .modifier-row-main {
   display: flex;
   align-items: center;
   gap: 0.55rem;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.modifier-row-main strong,
+.modifier-row-main .muted {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
 }
 
 .modifier-onoff {
@@ -309,8 +347,25 @@ button:hover {
   gap: 0.35rem;
 }
 
+.modifier-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+}
+
+.modifier-row-reorder {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
 .modifier-effect-row {
   align-items: end;
+}
+
+.modifier-effect-actions {
+  display: inline-flex;
+  gap: 0.25rem;
 }
 
 .modifier-affects-grid {
@@ -333,6 +388,43 @@ button:hover {
 
 .custom-widgets-toolbar {
   margin-bottom: 0.45rem;
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.modifier-preset-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.45rem 0 0.55rem;
+}
+
+.modifier-preset-row {
+  border: 1px solid #2f3338;
+  border-radius: 7px;
+  padding: 0.32rem 0.42rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.modifier-preset-actions {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.condition-info-body {
+  margin: 0.45rem 0 0.55rem;
+  max-height: 42vh;
+  overflow: auto;
+  border: 1px solid #2f3338;
+  border-radius: 7px;
+  background: #171b24;
+  padding: 0.45rem 0.5rem;
+  line-height: 1.35;
+  font-size: 0.88rem;
+  white-space: normal;
 }
 
 .custom-widgets-header-row {
@@ -342,8 +434,20 @@ button:hover {
   gap: 0.4rem;
 }
 
+.widget-head-row {
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid #2f3338;
+  margin-bottom: 0.4rem;
+}
+
+.widget-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+
 .custom-widgets-header-row .section-header {
-  margin: 0 0 0.35rem;
+  margin: 0;
 }
 
 .custom-widgets-header-row .custom-widget-edit-btn {
@@ -355,15 +459,15 @@ button:hover {
   border: 1px solid #2f3439;
   border-radius: 8px;
   margin-bottom: 0.45rem;
-  padding: 0.45rem 0.55rem;
+  padding: 0.32rem 0.42rem;
 }
 
 .custom-widget-head {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.28rem;
   flex-wrap: wrap;
-  padding-bottom: 0.35rem;
+  padding-bottom: 0.22rem;
   border-bottom: 1px solid #2f3338;
 }
 
@@ -377,8 +481,8 @@ button:hover {
   background: transparent;
   border: 0;
   color: #e2e2e2;
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 0.9rem;
+  font-weight: 700;
   text-align: left;
   padding: 0;
   cursor: pointer;
@@ -390,15 +494,15 @@ button:hover {
 }
 
 .custom-widget-collapse {
-  width: 2.7rem;
-  height: 2.35rem;
-  min-width: 2.7rem;
+  width: 0.95rem;
+  height: 0.95rem;
+  min-width: 0.95rem;
   padding: 0;
-  border-radius: 6px;
+  border-radius: 3px;
   border: 0;
   background: #2a2d31;
   color: #f0f0f0;
-  font-size: 1rem;
+  font-size: 0.62rem;
   line-height: 1;
 }
 
@@ -421,6 +525,7 @@ button:hover {
 }
 
 .custom-widget-text {
+  font-size: 0.84rem;
   line-height: 1.35;
   white-space: normal;
 }
@@ -438,18 +543,24 @@ button:hover {
 .custom-widget-dot-group {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.22rem;
   margin-left: 0.1rem;
 }
 
 .custom-widget-dot {
-  width: 1.35rem;
-  height: 1.35rem;
-  min-width: 1.35rem;
+  width: 0.88rem;
+  height: 0.88rem;
+  min-width: 0.88rem;
   border-radius: 999px;
-  border: 2px solid #3bb7bb;
+  border: 1px solid #3bb7bb;
   background: transparent;
   padding: 0;
+}
+
+.custom-widget-head .mini-btn,
+.custom-widget-head .custom-widget-edit-btn {
+  padding: 0.14rem 0.34rem;
+  font-size: 0.74rem;
 }
 
 .custom-widget-dot.on {
@@ -528,6 +639,26 @@ button:hover {
   font-size: 0.85rem;
   margin-top: 0.35rem;
   text-align: left;
+}
+
+.weapon-mod-hint {
+  margin: 0.12rem 0 0.18rem;
+  font-size: 0.76rem;
+}
+
+.weapon-mod-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.24rem;
+  margin: 0 0 0.24rem;
+  font-size: 0.72rem;
+}
+
+.weapon-mod-source-chip {
+  border: 1px solid #3a4654;
+  border-radius: 999px;
+  padding: 0.08rem 0.34rem;
+  background: #1c2430;
 }
 
 .weapon-strike-line {
@@ -755,11 +886,17 @@ button:hover {
   width: 64px;
   height: 24px;
   padding: 0.15rem 0.35rem;
-  border-radius: 2px;
-  border-color: #5a5a5a;
-  background: #f8f8f8;
-  color: #101010;
-  font-size: 0.9rem;
+  border-radius: 4px;
+  border: 1px solid #3f4a57;
+  background: #121821;
+  color: #e7edf6;
+  font-size: 0.86rem;
+}
+
+.strip-label input[type="number"]:focus {
+  outline: none;
+  border-color: #5b8ec5;
+  box-shadow: 0 0 0 1px rgba(91, 142, 197, 0.25);
 }
 
 #main-combat-strip .row {
@@ -797,10 +934,10 @@ button:hover {
   display: inline-flex;
   align-items: center;
   gap: 0.38rem;
-  padding: 0.12rem 0.3rem;
-  border: 1px solid #646464;
-  border-radius: 3px;
-  background: #1e1e1e;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 #main-combat-strip .defense-pill {
@@ -822,6 +959,46 @@ button:hover {
   background: #3a3a3a;
 }
 
+.roll-pill.mod-neutral {
+  color: #f1f1f1;
+}
+
+.roll-pill.mod-positive {
+  color: #a6e9b8;
+}
+
+.roll-pill.mod-positive:hover {
+  color: #b8f1c7;
+}
+
+.roll-pill.mod-negative {
+  color: #f0b0b0;
+}
+
+.roll-pill.mod-negative:hover {
+  color: #f8c0c0;
+}
+
+.weapon-roll-btn.mod-neutral {
+  color: #e2e2e2;
+}
+
+.weapon-roll-btn.mod-positive {
+  color: #a6e9b8;
+}
+
+.weapon-roll-btn.mod-positive:hover {
+  color: #b8f1c7;
+}
+
+.weapon-roll-btn.mod-negative {
+  color: #f0b0b0;
+}
+
+.weapon-roll-btn.mod-negative:hover {
+  color: #f8c0c0;
+}
+
 #main-skills-strip .skill-roll-pill {
   font-size: 0.78rem;
   padding: 0.16rem 0.34rem;
@@ -830,6 +1007,34 @@ button:hover {
 #main-combat-strip .defense-pill-ac {
   font-weight: 700;
   background: #3a3a3a;
+}
+
+#main-combat-strip .defense-pill-ac.shield-active {
+  background: #2d8f95;
+  border-color: #2d8f95;
+  color: #f4ffff;
+}
+
+.strip-inline-settings {
+  display: inline-flex;
+  align-items: end;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid #3a4654;
+  border-radius: 4px;
+  background: #1c2430;
+}
+
+.strip-inline-settings.hidden {
+  display: none;
+}
+
+.strip-inline-settings label {
+  font-size: 0.78rem;
+  gap: 0.2rem;
+}
+
+.strip-inline-settings input {
+  width: 4.2rem;
 }
 
 #main-combat-strip input[type="checkbox"] {

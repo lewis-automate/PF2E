@@ -1,16 +1,36 @@
 export function resolveVariableMap(state) {
-  const vars = {
-    ...state.derived.mods,
-    prof: state.derived.attackBase,
-    level: state.base.level,
-    ac: state.derived.defense.ac,
-    fortitude: state.derived.defense.fortitude,
-    reflex: state.derived.defense.reflex,
-    will: state.derived.defense.will,
-    perception: state.derived.defense.perception,
-    classdc: state.derived.classDc,
-    hp: state.derived.hp.current,
+  const vars = {};
+  const put = (key, value) => {
+    const normalized = String(key || "").trim().toLowerCase();
+    if (!normalized) return;
+    vars[normalized] = value;
+    if (normalized.includes("_")) vars[normalized.replace(/_/g, "-")] = value;
+    if (normalized.includes("-")) vars[normalized.replace(/-/g, "_")] = value;
   };
+
+  for (const [k, v] of Object.entries(state.derived.mods || {})) put(k, Number(v || 0));
+  put("prof", Number(state.derived.attackBase || 0));
+  put("level", Number(state.base.level || 1));
+  put("ac", Number(state.derived.defense.ac || 0));
+  put("fortitude", Number(state.derived.defense.fortitude || 0));
+  put("reflex", Number(state.derived.defense.reflex || 0));
+  put("will", Number(state.derived.defense.will || 0));
+  put("perception", Number(state.derived.defense.perception || 0));
+  put("initiative", Number(state.derived.initiative || 0));
+  put("classdc", Number(state.derived.classDc || 0));
+  put("speed", Number(state.derived.speed || state.base.baseSpeed || 0));
+  put("hp", Number(state.derived.hp.current || 0));
+  put("hp_current", Number(state.base.hp?.current || 0));
+  put("hp_temp", Number(state.base.hp?.temp || 0));
+  put("hp_max", Number(state.derived.hp.max || 0));
+  for (const [skill, bonus] of Object.entries(state.derived.skills || {})) put(skill, Number(bonus || 0));
+
+  const primaryAttackWidgetName = String(
+    state.weaponWidgets?.["weapon-widget"]?.name ||
+      state.weaponWidget?.name ||
+      "Attack"
+  );
+  put("attack_widget_header_name", primaryAttackWidgetName);
 
   const visited = new Set();
   const stack = new Set();
@@ -27,8 +47,8 @@ export function resolveVariableMap(state) {
       if (!Number.isFinite(val)) throw new Error(`Unknown variable: ${subVar}`);
       return String(val);
     });
-    resolvedExpr = resolvedExpr.replace(/\$([a-zA-Z_][a-zA-Z0-9_]*)/g, (_m, subVar) => {
-      const val = evalUserVar(subVar);
+    resolvedExpr = resolvedExpr.replace(/[$@]([a-zA-Z_][a-zA-Z0-9_-]*)/g, (_m, subVar) => {
+      const val = evalUserVar(String(subVar || "").replace(/-/g, "_"));
       if (!Number.isFinite(val)) throw new Error(`Unknown variable: ${subVar}`);
       return String(val);
     });
@@ -66,7 +86,7 @@ export function renderVariablesPanel(container, state, store) {
         )
         .join("")}
     </div>
-    <p class="muted">Built-ins include: $str $dex $con $int $wis $cha $prof $level $ac $fortitude $reflex $will $perception $classdc $hp</p>
+    <p class="muted">Built-ins include stats, saves, all skills (for example: $acrobatics), plus aliases like @attack-widget-header-name.</p>
   `;
 
   const form = container.querySelector("#add-var-form");

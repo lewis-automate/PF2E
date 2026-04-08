@@ -15,10 +15,16 @@
       <h1 id="character-header-name">Character</h1>
       <div class="top-actions">
         <button id="overview-edit-btn" type="button">Edit Layout</button>
-        <button id="characters-btn" type="button">Characters</button>
-        <button id="import-btn" type="button">Import</button>
-        <button id="new-character-btn" type="button">New Character</button>
-        <button id="export-btn" type="button">Export</button>
+        <div class="manage-menu-wrap">
+          <button id="manage-characters-btn" type="button" aria-expanded="false" aria-controls="manage-characters-popup">
+            Manage Characters
+          </button>
+          <div id="manage-characters-popup" class="manage-menu-popup" aria-hidden="true">
+            <button id="manage-characters-open-btn" type="button">Characters</button>
+            <button id="manage-import-btn" type="button">Import</button>
+            <button id="manage-export-btn" type="button">Export</button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -47,7 +53,11 @@
     <aside id="characters-popup" class="roll-log-popup characters-popup" aria-hidden="true">
       <div class="roll-log-head">
         <h2>Characters</h2>
-        <button id="characters-close" type="button">Close</button>
+        <div class="row">
+          <button id="characters-new-btn" type="button">New Character</button>
+          <button id="characters-save-as-btn" type="button">Save As</button>
+          <button id="characters-close" type="button">Close</button>
+        </div>
       </div>
       <div id="characters-list"></div>
     </aside>
