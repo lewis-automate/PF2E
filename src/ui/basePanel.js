@@ -1,4 +1,5 @@
 import { SKILL_TO_ABILITY, WEAPON_TYPES, ARMOR_TYPES, CLASS_DC_KEY_OPTIONS } from "../engine/calc.js";
+import { MODIFIER_TYPES } from "../engine/modifiers.js";
 
 const PROF_OPTIONS = ["untrained", "trained", "expert", "master", "legendary"];
 const SKILL_KEYS = Object.keys(SKILL_TO_ABILITY);
@@ -25,14 +26,7 @@ export function renderBasePanel(container, state, store) {
   const { base } = state;
   const custom = base.customProficiencies || { core: [], skill: [] };
   const health = base.health || {};
-  const modifierRows = Object.entries(base.modifierGroups || {})
-    .flatMap(([gid, group]) =>
-      (Array.isArray(group?.rows) ? group.rows : []).map((row) => ({
-        groupId: gid,
-        groupTitle: String(group?.title || "Modifier Widget"),
-        row,
-      }))
-    );
+  const speedChanges = Array.isArray(base.speedChanges) ? base.speedChanges : [];
 
   const statsInputs = ABILITIES.map(
     (k) =>
@@ -94,13 +88,9 @@ export function renderBasePanel(container, state, store) {
       <div class="row">
         <label>Name <input data-type="character-name" value="${base.characterName || ""}" /></label>
         <label>Level <input data-type="level" type="number" value="${base.level}" /></label>
-        <label>Base Speed <input data-type="base-speed" type="number" min="0" step="5" value="${Number(base.baseSpeed || 0)}" /></label>
       </div>
       <div class="row">
         <p class="muted">Save slot metadata is hidden from the UI.</p>
-      </div>
-      <div class="row">
-        <button type="button" data-type="open-modifier-add">Add Modifier</button>
       </div>
       </div>
       <div class="prof-box">
@@ -114,6 +104,37 @@ export function renderBasePanel(container, state, store) {
         <label>Class HP <input data-type="health" data-key="classPerLevel" type="number" value="${Number(health.classPerLevel || 0)}" /></label>
         <label>Per Level <input data-type="health" data-key="perLevelModifier" type="number" value="${Number(health.perLevelModifier || 0)}" /></label>
         <label>Flat Bonus <input data-type="health" data-key="flatBonus" type="number" value="${Number(health.flatBonus || 0)}" /></label>
+      </div>
+      </div>
+      <div class="prof-box">
+      <p class="section-header">Speed</p>
+      <div class="row">
+        <label>Base Speed <input data-type="base-speed" type="number" min="0" step="5" value="${Number(base.baseSpeed || 0)}" /></label>
+      </div>
+      <div>
+        ${
+          speedChanges.length
+            ? speedChanges
+                .map(
+                  (row) => `
+          <div class="weapon-bonus-row">
+            <label>Name <input data-type="speed-name" data-id="${row.id}" value="${row.label || ""}" /></label>
+            <label>Number <input data-type="speed-value" data-id="${row.id}" type="number" value="${Number(row.value || 0)}" /></label>
+            <label>Type
+              <select data-type="speed-type" data-id="${row.id}">
+                ${MODIFIER_TYPES.map((t) => `<option value="${t}" ${String(row.type || "item") === t ? "selected" : ""}>${t}</option>`).join("")}
+              </select>
+            </label>
+            <button type="button" data-type="speed-del" data-id="${row.id}">X</button>
+          </div>
+        `
+                )
+                .join("")
+            : `<p class="muted">No speed changes yet.</p>`
+        }
+      </div>
+      <div class="row">
+        <button type="button" data-type="speed-add">Add speed change</button>
       </div>
       </div>
       <div class="prof-box">
@@ -148,36 +169,6 @@ export function renderBasePanel(container, state, store) {
       <div>${customSkillRows}</div>
       <div class="row">
         <button type="button" data-type="custom-prof-add" data-category="skill">Add</button>
-      </div>
-      </div>
-      <div class="prof-box">
-      <p class="section-header">Modifiers</p>
-      <div>
-        ${
-          modifierRows.length
-            ? modifierRows
-                .map(({ groupId, groupTitle, row }) => {
-                  const effectText = Array.isArray(row?.effectsBatches) && row.effectsBatches.length
-                    ? row.effectsBatches.map((b) => `${b.target || "all"} / ${b.type || "untyped"} / ${b.effect || "0"}`).join(" + ")
-                    : String(row?.effect ?? row?.value ?? "");
-                  return `<div class="formula-chip">
-                    <span><strong>${row?.label || "Modifier"}</strong> <span class="muted">(${groupTitle})</span> = ${effectText || "0"}</span>
-                    <span class="row">
-                      <label class="modifier-onoff">
-                        <input type="checkbox" data-type="modifier-enabled" data-group-id="${groupId}" data-id="${row?.id || ""}" ${row?.enabled === false ? "" : "checked"} />
-                        <span>${row?.enabled === false ? "Off" : "On"}</span>
-                      </label>
-                      ${
-                        row?.presetKey
-                          ? ""
-                          : `<button type="button" class="mini-btn danger-btn" data-type="modifier-delete" data-group-id="${groupId}" data-id="${row?.id || ""}">Delete</button>`
-                      }
-                    </span>
-                  </div>`;
-                })
-                .join("")
-            : `<p class="muted">No modifiers yet.</p>`
-        }
       </div>
       </div>
     </article>
@@ -225,45 +216,23 @@ export function renderBasePanel(container, state, store) {
           draft.base.customProficiencies = draft.base.customProficiencies || { core: [], skill: [] };
           const row = draft.base.customProficiencies[category].find((r) => r.id === id);
           if (row) row.rank = target.value;
-        } else if (target.dataset.type === "modifier-enabled") {
-          const gid = String(target.dataset.groupId || "");
-          if (!gid) return;
-          const row = (draft.base.modifierGroups?.[gid]?.rows || []).find((m) => m.id === target.dataset.id);
-          if (row) row.enabled = Boolean(target.checked);
+        } else if (target.dataset.type === "speed-name") {
+          const row = (draft.base.speedChanges || []).find((r) => r.id === target.dataset.id);
+          if (row) row.label = String(target.value || "");
+        } else if (target.dataset.type === "speed-value") {
+          const row = (draft.base.speedChanges || []).find((r) => r.id === target.dataset.id);
+          if (row) row.value = Number(target.value || 0);
+        } else if (target.dataset.type === "speed-type") {
+          const row = (draft.base.speedChanges || []).find((r) => r.id === target.dataset.id);
+          if (row) row.type = MODIFIER_TYPES.includes(String(target.value || "").toLowerCase()) ? String(target.value || "").toLowerCase() : "item";
         }
       });
     });
   });
 
-  container.querySelectorAll("button[data-type='custom-prof-add'],button[data-type='custom-prof-del'],button[data-type='open-modifier-add'],button[data-type='modifier-delete']").forEach((btn) => {
+  container.querySelectorAll("button[data-type='custom-prof-add'],button[data-type='custom-prof-del'],button[data-type='speed-add'],button[data-type='speed-del']").forEach((btn) => {
     btn.addEventListener("click", (event) => {
       const target = event.currentTarget;
-      if (target.dataset.type === "open-modifier-add") {
-        document.querySelector('.tab-btn[data-tab="overview"]')?.click();
-        store.patch((draft) => {
-          draft.ui.modifierWidgetEditorOpen = true;
-          draft.ui.modifierWidgetEditingId = null;
-          draft.ui.modifierWidgetGroupId = "modifier-widget";
-          draft.ui.modifierPresetBrowserOpen = false;
-          draft.ui.modifierPresetGroupId = "modifier-widget";
-        });
-        return;
-      }
-      if (target.dataset.type === "modifier-delete") {
-        const gid = String(target.dataset.groupId || "");
-        const id = String(target.dataset.id || "");
-        if (!gid || !id) return;
-        if (!window.confirm("Delete this custom modifier? This cannot be undone.")) return;
-        store.patch((draft) => {
-          const rows = draft.base.modifierGroups?.[gid]?.rows || [];
-          draft.base.modifierGroups[gid].rows = rows.filter((m) => String(m.id || "") !== id);
-          if (draft.ui.modifierWidgetEditingId === id && draft.ui.modifierWidgetGroupId === gid) {
-            draft.ui.modifierWidgetEditingId = null;
-            draft.ui.modifierWidgetEditorOpen = false;
-          }
-        });
-        return;
-      }
       store.patch((draft) => {
         if (target.dataset.type === "custom-prof-add") {
           const category = target.dataset.category;
@@ -280,6 +249,17 @@ export function renderBasePanel(container, state, store) {
           draft.base.customProficiencies[category] = draft.base.customProficiencies[category].filter(
             (row) => row.id !== id
           );
+        } else if (target.dataset.type === "speed-add") {
+          draft.base.speedChanges = draft.base.speedChanges || [];
+          draft.base.speedChanges.push({
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            label: "",
+            value: 0,
+            type: "item",
+          });
+        } else if (target.dataset.type === "speed-del") {
+          const id = target.dataset.id;
+          draft.base.speedChanges = (draft.base.speedChanges || []).filter((row) => row.id !== id);
         }
       });
     });

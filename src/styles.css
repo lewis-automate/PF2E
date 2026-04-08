@@ -347,6 +347,10 @@ button:hover {
   gap: 0.35rem;
 }
 
+.modifier-onoff input[type="checkbox"] {
+  accent-color: #3bb7bb;
+}
+
 .modifier-row-actions {
   display: inline-flex;
   align-items: center;
@@ -761,7 +765,7 @@ button:hover {
 
 .weapon-bonus-row {
   display: grid;
-  grid-template-columns: minmax(11rem, 1.3fr) minmax(8rem, 1fr) auto auto;
+  grid-template-columns: minmax(10rem, 1.2fr) minmax(7rem, 0.9fr) minmax(8rem, 1fr) auto auto;
   gap: 0.45rem 0.6rem;
   align-items: end;
   margin-bottom: 0.45rem;
@@ -924,6 +928,79 @@ button:hover {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
+}
+
+#main-combat-strip .health-stack {
+  display: inline-grid;
+  gap: 0.2rem;
+}
+
+#main-combat-strip .health-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  flex-wrap: wrap;
+}
+
+#main-combat-strip .health-label {
+  font-weight: 700;
+  color: #d4e8f1;
+  margin-right: 0.1rem;
+}
+
+#main-combat-strip .base-top-layout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.6rem;
+  align-items: start;
+  width: 100%;
+}
+
+#main-combat-strip .ac-square-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+#main-combat-strip .defense-pill-ac-big {
+  min-width: 5.6rem;
+  min-height: 3.3rem;
+  font-size: 1.6rem;
+  font-weight: 800;
+  border-radius: 8px;
+  justify-content: center;
+}
+
+#main-combat-strip .health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 0.5rem;
+  align-items: center;
+}
+
+#main-combat-strip .health-cell-label {
+  display: inline-grid;
+  grid-template-columns: auto 4.2rem;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+#main-combat-strip .health-cell-inline {
+  display: inline-grid;
+  grid-template-columns: auto 4.2rem;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+#main-combat-strip .health-cell-inline .strip-label {
+  gap: 0;
+}
+
+#main-combat-strip .health-cell-inline input[type="number"] {
+  width: 4.2rem;
+  height: 24px;
+  padding: 0.12rem 0.3rem;
 }
 
 #main-combat-strip .strip-pill-group {
@@ -1096,6 +1173,66 @@ textarea {
   font-size: 0.85rem;
 }
 
+.variable-hint {
+  margin: 0.25rem 0 0.45rem;
+  line-height: 1.35;
+}
+
+.variable-hint code {
+  font-size: 0.85em;
+  padding: 0 0.2rem;
+  background: #2a2a2a;
+  border-radius: 3px;
+}
+
+.variable-chip-btn {
+  margin: 0.08rem 0.16rem 0.08rem 0;
+  padding: 0.14rem 0.36rem;
+  font-size: 0.74rem;
+  cursor: pointer;
+  border-color: #4a5a66;
+  background: #2c3338;
+}
+
+.variable-chip-btn:hover {
+  background: #344049;
+  border-color: #5f7887;
+}
+
+.variable-help {
+  color: #b7c6d0;
+}
+
+.variable-autocomplete-popup {
+  position: fixed;
+  z-index: 1800;
+  background: #1a1f2b;
+  border: 1px solid #30384d;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  padding: 0.2rem;
+  display: grid;
+  gap: 0.15rem;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.variable-autocomplete-item {
+  text-align: left;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: #242b39;
+  color: #dfe8f2;
+  padding: 0.22rem 0.42rem;
+  font-size: 0.82rem;
+}
+
+.variable-autocomplete-item:hover,
+.variable-autocomplete-item.active {
+  background: #314055;
+  border-color: #4e6a8a;
+}
+
 .section-header {
   color: #cfe3e8;
   font-size: 0.9rem;
@@ -1210,10 +1347,16 @@ textarea {
 }
 
 .roll-log-toggle {
+  min-width: 4.2rem;
+}
+
+.floating-actions {
   position: fixed;
   right: 1rem;
   bottom: 1rem;
   z-index: 1000;
+  display: inline-flex;
+  gap: 0.4rem;
 }
 
 .roll-log-popup {
@@ -1234,6 +1377,15 @@ textarea {
 
 .roll-log-popup.open {
   display: block;
+}
+
+.quick-roll-popup {
+  bottom: 7.1rem;
+  width: min(320px, calc(100vw - 2rem));
+}
+
+.quick-roll-popup input[type="number"] {
+  width: 4rem;
 }
 
 .characters-popup {

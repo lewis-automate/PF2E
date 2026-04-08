@@ -71,9 +71,22 @@ export function calculateDerived(base) {
   );
 
   const level = Number(base.level || 1);
+  const armor = base.armor || {};
   const mods = Object.fromEntries(
     ABILITIES.map((key) => [key, abilityMod(Number(base.stats[key] || 10))])
   );
+  const armorDexCap = Number.isFinite(Number(armor.dexCap)) ? Number(armor.dexCap) : 99;
+  const appliedDexMod = Math.min(mods.dex, armorDexCap);
+  const armorBonusRows = (Array.isArray(armor.bonuses) ? armor.bonuses : []).map((b) => ({
+    enabled: true,
+    target: "ac",
+    type: String(b?.type || "item"),
+    effect: String(Number(b?.bonus || 0)),
+  }));
+  const armorAcBonus = Number(armor.acBonus || 0) + summarizeModifiers(armorBonusRows, "ac").total;
+  const armorModifierValue = Number(armor.modifierValue || 0);
+  const armorSpeedPenalty = Number(armor.speedPenalty || 0);
+  const armorCheckPenalty = Number(armor.checkPenalty || 0);
 
   const armorType = base.armorType || "unarmored";
   const weaponType = base.weaponType || "simple";
@@ -93,10 +106,12 @@ export function calculateDerived(base) {
   const defense = {
     ac:
       10 +
-      mods.dex +
+      appliedDexMod +
       level +
       rankBonus.ac +
       Number(base.bonuses.acItem || 0) +
+      armorAcBonus +
+      armorModifierValue +
       Number(base.toggles?.raiseShield ? Number(base.toggles?.raiseShieldBonus || 1) : 0),
     fortitude:
       10 + mods.con + level + rankBonus.fortitude + Number(base.bonuses.fortitudeItem || 0),
@@ -141,7 +156,14 @@ export function calculateDerived(base) {
   });
   const modifierSummary = summarizeModifiers(modifierRows, "all");
   const modFor = (target) => summarizeModifiers(modifierRows, target).total;
-  const speed = Number(base.baseSpeed || 0) + modFor("speed");
+  const speedRows = (Array.isArray(base.speedChanges) ? base.speedChanges : []).map((row) => ({
+    enabled: true,
+    target: "speed",
+    type: String(row?.type || "item"),
+    effect: String(Number(row?.value || 0)),
+  }));
+  const speedAllRows = [...modifierRows, ...speedRows];
+  const speed = Number(base.baseSpeed || 0) - armorSpeedPenalty + summarizeModifiers(speedAllRows, "speed").total;
   // PF2E default initiative is Perception unless another skill is explicitly used.
   const initiative = defense.perception - 10 + modFor("initiative");
   const skills = Object.fromEntries(
@@ -151,7 +173,8 @@ export function calculateDerived(base) {
         level +
         profRankToBonus(base.proficiencies?.[skill] || "untrained") +
         modFor("skill") +
-        modFor(`skill:${skill}`),
+        modFor(`skill:${skill}`) +
+        (["acrobatics", "athletics", "stealth", "thievery"].includes(skill) ? -armorCheckPenalty : 0),
     ])
   );
   defense.ac += modFor("ac");

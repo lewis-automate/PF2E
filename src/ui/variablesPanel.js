@@ -68,12 +68,24 @@ export function resolveVariableMap(state) {
 
 export function renderVariablesPanel(container, state, store) {
   const entries = Object.entries(state.variables);
+  const builtIns = Object.keys(resolveVariableMap(state) || {})
+    .map((k) => String(k || "").toLowerCase().replace(/-/g, "_"))
+    .filter(Boolean);
+  const suggestions = [...new Set(builtIns)].sort((a, b) => a.localeCompare(b));
+  const chips = suggestions
+    .slice(0, 18)
+    .map((k) => `<button type="button" class="mini-btn variable-chip-btn" data-vp-token="$${k}">$${k}</button>`)
+    .join(" ");
   container.innerHTML = `
     <form id="add-var-form" class="row">
       <label>Name <input name="name" required placeholder="rageBonus" /></label>
-      <label>Expression <input name="expr" required placeholder="[str]+2" /></label>
+      <label>Expression <input name="expr" required list="variables-panel-options" placeholder="[str]+2 or $level+2" /></label>
       <button type="submit">Add / Update Variable</button>
     </form>
+    <datalist id="variables-panel-options">
+      ${suggestions.map((k) => `<option value="$${k}"></option>`).join("")}
+    </datalist>
+    <div class="muted variable-hint"><span class="variable-help">Click a variable to insert, or type <code>$</code> then letters. Typed bonus syntax: <code>[circumstance:1]</code>.</span><br />Try: ${chips || "<code>$level</code>"}${suggestions.length > 18 ? " ..." : ""}</div>
     <div>
       ${entries
         .map(
@@ -90,6 +102,21 @@ export function renderVariablesPanel(container, state, store) {
   `;
 
   const form = container.querySelector("#add-var-form");
+  const exprInput = container.querySelector('input[name="expr"]');
+  container.querySelectorAll("button[data-vp-token]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!exprInput) return;
+      const token = String(btn.dataset.vpToken || "");
+      const value = String(exprInput.value || "");
+      const start = Number.isFinite(exprInput.selectionStart) ? exprInput.selectionStart : value.length;
+      const end = Number.isFinite(exprInput.selectionEnd) ? exprInput.selectionEnd : start;
+      const next = `${value.slice(0, start)}${token}${value.slice(end)}`;
+      exprInput.value = next;
+      const caret = start + token.length;
+      if (typeof exprInput.setSelectionRange === "function") exprInput.setSelectionRange(caret, caret);
+      exprInput.focus();
+    });
+  });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = new FormData(form);

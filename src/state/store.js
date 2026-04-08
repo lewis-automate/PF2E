@@ -46,6 +46,20 @@ function createInitialState() {
         willItem: 0,
         perceptionItem: 0,
       },
+      armor: {
+        name: "",
+        group: "",
+        bulk: "",
+        acBonus: 0,
+        dexCap: 5,
+        checkPenalty: 0,
+        speedPenalty: 0,
+        strengthRequirement: 0,
+        bonuses: [],
+        enchantments: "",
+        modifiers: "",
+        modifierValue: 0,
+      },
       modifiers: [],
       modifierGroups: {
         "modifier-widget": {
@@ -71,6 +85,7 @@ function createInitialState() {
       skillAbilityOverrides: {},
       customSkillAbilities: {},
       hp: { max: 20, current: 20, temp: 0 },
+      speedChanges: [],
     },
     derived: {},
     variables: {},
@@ -117,6 +132,8 @@ function createInitialState() {
       characterManagerOpen: false,
       overviewLayoutEdit: false,
       shieldSettingsOpen: false,
+      armorSettingsOpen: false,
+      quickRollOpen: false,
     },
     rollLog: [],
   };

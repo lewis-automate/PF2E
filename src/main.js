@@ -23,6 +23,228 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;");
 }
 
+function listAvailableVariableTokens(state) {
+  let map = {};
+  try {
+    map = resolveVariableMap(state) || {};
+  } catch (_err) {
+    map = {};
+  }
+  const canonical = new Set(
+    Object.keys(map).map((k) => String(k || "").trim().toLowerCase().replace(/-/g, "_")).filter(Boolean)
+  );
+  canonical.add("attack_widget_header_name");
+  return [...canonical]
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => `$${name}`);
+}
+
+function insertTokenAtCursor(el, token) {
+  if (!el) return;
+  const value = String(el.value || "");
+  const start = Number.isFinite(el.selectionStart) ? el.selectionStart : value.length;
+  const end = Number.isFinite(el.selectionEnd) ? el.selectionEnd : start;
+  const next = `${value.slice(0, start)}${token}${value.slice(end)}`;
+  el.value = next;
+  const caret = start + token.length;
+  if (typeof el.setSelectionRange === "function") el.setSelectionRange(caret, caret);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  el.focus();
+}
+
+function replaceVariableTokenAtCursor(el, replacement) {
+  if (!el) return;
+  const value = String(el.value || "");
+  const caret = Number.isFinite(el.selectionStart) ? el.selectionStart : value.length;
+  const left = value.slice(0, caret);
+  const right = value.slice(caret);
+  const match = left.match(/[$@][a-zA-Z0-9_-]*$/);
+  if (!match) {
+    insertTokenAtCursor(el, replacement);
+    return;
+  }
+  const start = caret - match[0].length;
+  const next = `${value.slice(0, start)}${replacement}${right}`;
+  el.value = next;
+  const nextCaret = start + replacement.length;
+  if (typeof el.setSelectionRange === "function") el.setSelectionRange(nextCaret, nextCaret);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  el.focus();
+}
+
+function bindVariableAutocomplete(scope = document, tokens = []) {
+  const existing = document.querySelector("#variable-autocomplete-popup");
+  if (existing) existing.remove();
+  const popup = document.createElement("div");
+  popup.id = "variable-autocomplete-popup";
+  popup.className = "variable-autocomplete-popup hidden";
+  document.body.appendChild(popup);
+  let activeInput = null;
+  let options = [];
+  let activeIndex = 0;
+
+  const close = () => {
+    popup.classList.add("hidden");
+    popup.innerHTML = "";
+    activeInput = null;
+    options = [];
+    activeIndex = 0;
+  };
+
+  const openFor = (input) => {
+    activeInput = input;
+    const rect = input.getBoundingClientRect();
+    popup.style.left = `${Math.max(8, rect.left)}px`;
+    popup.style.top = `${Math.min(window.innerHeight - 10, rect.bottom + 4)}px`;
+    popup.style.width = `${Math.max(200, rect.width)}px`;
+    popup.classList.remove("hidden");
+  };
+
+  const render = () => {
+    if (!activeInput || !options.length) {
+      close();
+      return;
+    }
+    popup.innerHTML = options
+      .map(
+        (token, idx) =>
+          `<button type="button" class="variable-autocomplete-item ${idx === activeIndex ? "active" : ""}" data-var-ac-opt="${escapeHtml(token)}">${escapeHtml(token)}</button>`
+      )
+      .join("");
+    popup.querySelectorAll("[data-var-ac-opt]").forEach((btn, idx) => {
+      btn.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        replaceVariableTokenAtCursor(activeInput, options[idx]);
+        close();
+      });
+    });
+  };
+
+  const updateForInput = (input) => {
+    const caret = Number.isFinite(input.selectionStart) ? input.selectionStart : String(input.value || "").length;
+    const left = String(input.value || "").slice(0, caret);
+    const match = left.match(/[$@]([a-zA-Z0-9_-]*)$/);
+    if (!match) {
+      close();
+      return;
+    }
+    const typed = String(match[1] || "").toLowerCase();
+    const filtered = tokens.filter((token) => token.slice(1).toLowerCase().startsWith(typed)).slice(0, 12);
+    if (!filtered.length) {
+      close();
+      return;
+    }
+    if (activeInput !== input) activeIndex = 0;
+    options = filtered;
+    openFor(input);
+    render();
+  };
+
+  const targets = scope.querySelectorAll('input[list],textarea[list],input[data-armor-field="modifiers"],#cw-roll1,#cw-roll2');
+  targets.forEach((input) => {
+    if (!input || (input.tagName !== "INPUT" && input.tagName !== "TEXTAREA")) return;
+    input.addEventListener("input", () => updateForInput(input));
+    input.addEventListener("click", () => updateForInput(input));
+    input.addEventListener("focus", () => updateForInput(input));
+    input.addEventListener("blur", () => {
+      setTimeout(() => {
+        if (!popup.matches(":hover")) close();
+      }, 120);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (popup.classList.contains("hidden")) return;
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        activeIndex = (activeIndex + 1) % Math.max(1, options.length);
+        render();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        activeIndex = (activeIndex - 1 + Math.max(1, options.length)) % Math.max(1, options.length);
+        render();
+      } else if (event.key === "Enter" || event.key === "Tab") {
+        if (!options.length) return;
+        event.preventDefault();
+        replaceVariableTokenAtCursor(input, options[activeIndex] || options[0]);
+        close();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    });
+  });
+}
+
+function bindVariableInsertHandlers(scope = document) {
+  scope.querySelectorAll("button[data-var-token]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const token = String(btn.dataset.varToken || "");
+      const targetSelector = String(btn.dataset.varTarget || "").trim();
+      if (!token || !targetSelector) return;
+      const card = btn.closest(".weapon-editor-card") || document;
+      const active = document.activeElement;
+      const useActive =
+        active &&
+        (active.tagName === "INPUT" || active.tagName === "TEXTAREA") &&
+        typeof active.matches === "function" &&
+        active.matches(targetSelector);
+      const target = useActive ? active : card.querySelector(targetSelector);
+      insertTokenAtCursor(target, token);
+    });
+  });
+}
+
+function renderVariableAssist(listId, tokens, targetSelector = "") {
+  const options = tokens.map((token) => `<option value="${escapeHtml(token)}"></option>`).join("");
+  const shown = tokens.slice(0, 18);
+  const chips = shown
+    .map(
+      (token) =>
+        `<button type="button" class="mini-btn variable-chip-btn" data-var-token="${escapeHtml(token)}" data-var-target="${escapeHtml(targetSelector)}">${escapeHtml(token)}</button>`
+    )
+    .join(" ");
+  return {
+    listAttr: `list="${escapeHtml(listId)}"`,
+    datalistHtml: `<datalist id="${escapeHtml(listId)}">${options}</datalist>`,
+    hintHtml: `<div class="muted variable-hint"><span class="variable-help">Click a variable to insert at cursor, or type <code>$</code> then letters. Typed bonus syntax: <code>[circumstance:1]</code>.</span><br />Variables: ${chips || `<code>$level</code>`}${tokens.length > shown.length ? " ..." : ""} <span class="muted">(@ also works)</span></div>`,
+  };
+}
+
+function coerceArmorState(armor) {
+  const base = armor && typeof armor === "object" ? armor : {};
+  const legacyPotency = Number(base.potencyRune || 0);
+  const existingBonuses = Array.isArray(base.bonuses) ? base.bonuses : [];
+  const bonuses = existingBonuses.map((b) => ({
+    id: String(b?.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`),
+    label: String(b?.label || "Armor bonus"),
+    bonus: Number(b?.bonus || 0),
+    type: MODIFIER_TYPES.includes(String(b?.type || "").toLowerCase()) ? String(b.type).toLowerCase() : "item",
+  }));
+  if (legacyPotency !== 0 && !bonuses.length) {
+    bonuses.push({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      label: "Potency",
+      bonus: legacyPotency,
+      type: "item",
+    });
+  }
+  return {
+    name: String(base.name || ""),
+    group: String(base.group || ""),
+    bulk: String(base.bulk || ""),
+    acBonus: Number(base.acBonus || 0),
+    dexCap: Number.isFinite(Number(base.dexCap)) ? Number(base.dexCap) : 5,
+    checkPenalty: Number(base.checkPenalty || 0),
+    speedPenalty: Number(base.speedPenalty || 0),
+    strengthRequirement: Number(base.strengthRequirement || 0),
+    bonuses,
+    enchantments: String(base.enchantments || ""),
+    modifiers: String(base.modifiers || ""),
+    modifierValue: Number(base.modifierValue || 0),
+  };
+}
+
 const root = {
   base: document.querySelector("#base-panel"),
   characterHeaderName: document.querySelector("#character-header-name"),
@@ -36,6 +258,13 @@ const root = {
   rollLogPopup: document.querySelector("#roll-log-popup"),
   rollLogToggle: document.querySelector("#roll-log-toggle"),
   rollLogClose: document.querySelector("#roll-log-close"),
+  quickRollToggle: document.querySelector("#quick-roll-toggle"),
+  quickRollPopup: document.querySelector("#quick-roll-popup"),
+  quickRollClose: document.querySelector("#quick-roll-close"),
+  quickRollD20Btn: document.querySelector("#quick-roll-d20-btn"),
+  quickRollApplyBtn: document.querySelector("#quick-roll-apply-btn"),
+  quickRollCount: document.querySelector("#quick-roll-count"),
+  quickRollSides: document.querySelector("#quick-roll-sides"),
   charactersPopup: document.querySelector("#characters-popup"),
   charactersList: document.querySelector("#characters-list"),
   charactersNewBtn: document.querySelector("#characters-new-btn"),
@@ -140,8 +369,25 @@ if (seeded.base?.modifierGroups && !seeded.base.modifierGroups["modifier-widget"
 if (seeded.base && !Number.isFinite(Number(seeded.base.baseSpeed))) {
   seeded.base.baseSpeed = 25;
 }
+if (seeded.base && !Array.isArray(seeded.base.speedChanges)) {
+  seeded.base.speedChanges = [];
+}
+if (seeded.base && Array.isArray(seeded.base.speedChanges)) {
+  seeded.base.speedChanges = seeded.base.speedChanges.map((row) => {
+    const type = String(row?.type || "item").toLowerCase();
+    return {
+      id: String(row?.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`),
+      label: String(row?.label || ""),
+      value: Number(row?.value || 0),
+      type: MODIFIER_TYPES.includes(type) ? type : "item",
+    };
+  });
+}
 if (seeded.base && (!seeded.base.toggles || typeof seeded.base.toggles !== "object")) {
   seeded.base.toggles = { raiseShield: false, raiseShieldBonus: 1 };
+}
+if (seeded.base) {
+  seeded.base.armor = coerceArmorState(seeded.base.armor);
 }
 if (seeded.base && typeof seeded.base.toggles.raiseShield !== "boolean") {
   seeded.base.toggles.raiseShield = false;
@@ -199,6 +445,12 @@ if (seeded.ui && typeof seeded.ui.characterManagerOpen !== "boolean") {
 }
 if (seeded.ui && typeof seeded.ui.shieldSettingsOpen !== "boolean") {
   seeded.ui.shieldSettingsOpen = false;
+}
+if (seeded.ui && typeof seeded.ui.armorSettingsOpen !== "boolean") {
+  seeded.ui.armorSettingsOpen = false;
+}
+if (seeded.ui && typeof seeded.ui.quickRollOpen !== "boolean") {
+  seeded.ui.quickRollOpen = false;
 }
 if (!Array.isArray(seeded.customWidgets)) {
   seeded.customWidgets = [];
@@ -285,6 +537,7 @@ if (!seeded.weaponWidget) {
     ...t,
     alwaysOn: t.alwaysOn === true,
     multiplyOnCrit: t.multiplyOnCrit !== false,
+    type: MODIFIER_TYPES.includes(String(t.type || "").toLowerCase()) ? String(t.type).toLowerCase() : "untyped",
   }));
   delete ww.critMode;
   delete ww.deadlyDie;
@@ -299,6 +552,7 @@ if (!seeded.weaponWidget) {
   ww.attackBonuses = ww.attackBonuses.map((b) => ({
     ...b,
     alwaysOn: b.alwaysOn === true,
+    type: MODIFIER_TYPES.includes(String(b.type || "").toLowerCase()) ? String(b.type).toLowerCase() : "item",
   }));
   if (typeof ww.attackBonusFlat === "number" && ww.attackBonusFlat !== 0 && ww.attackBonuses.length === 0) {
     ww.attackBonuses.push({
@@ -580,8 +834,22 @@ function parseBracketRolls(content) {
 function parseRollField(raw, fallbackLabel) {
   const text = String(raw || "").trim();
   if (!text) return null;
-  const m = text.match(/^([^:]+):\s*(.+)$/);
-  if (m) return { label: m[1].trim(), formula: m[2].trim() };
+  let depth = 0;
+  let splitAt = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === "[") depth += 1;
+    else if (ch === "]") depth = Math.max(0, depth - 1);
+    else if (ch === ":" && depth === 0) {
+      splitAt = i;
+      break;
+    }
+  }
+  if (splitAt > 0) {
+    const left = text.slice(0, splitAt).trim();
+    const right = text.slice(splitAt + 1).trim();
+    if (left && right) return { label: left, formula: right };
+  }
   return { label: fallbackLabel, formula: text };
 }
 
@@ -999,7 +1267,11 @@ function renderRollLog(state) {
   const isOpen = Boolean(state.ui.rollLogOpen);
   root.rollLogPopup.classList.toggle("open", isOpen);
   root.rollLogPopup.setAttribute("aria-hidden", String(!isOpen));
-  root.rollLogToggle.textContent = isOpen ? "Hide Roll Log" : "Roll Log";
+  root.rollLogToggle.textContent = isOpen ? "Hide Log" : "Log";
+  const quickOpen = Boolean(state.ui.quickRollOpen);
+  root.quickRollPopup?.classList.toggle("open", quickOpen);
+  root.quickRollPopup?.setAttribute("aria-hidden", String(!quickOpen));
+  if (root.quickRollToggle) root.quickRollToggle.textContent = quickOpen ? "Hide Roll" : "Roll";
 }
 
 function renderCharacterManager(state) {
@@ -1111,40 +1383,112 @@ function renderOverview(state) {
   const willBonus = state.derived.defense.will - 10;
   const acBonus = state.derived.defense.ac - 10;
   const classDcBonus = state.derived.classDc - 10;
+  const armor = coerceArmorState(state.base.armor);
+  const variableTokens = listAvailableVariableTokens(state);
+  const armorVarAssist = renderVariableAssist("armor-variable-options", variableTokens, 'input[data-armor-field="modifiers"]');
+  const armorBonusRows = (armor.bonuses || [])
+    .map(
+      (b) => `
+        <div class="weapon-bonus-row">
+          <label>Label <input data-armor-bonus-id="${b.id}" data-armor-bonus-field="label" value="${escapeHtml(b.label)}" /></label>
+          <label>Bonus <input data-armor-bonus-id="${b.id}" data-armor-bonus-field="bonus" type="number" value="${Number(b.bonus || 0)}" /></label>
+          <label>Type
+            <select data-armor-bonus-id="${b.id}" data-armor-bonus-field="type">
+              ${MODIFIER_TYPES.map((type) => `<option value="${type}" ${String(b.type || "item") === type ? "selected" : ""}>${type}</option>`).join("")}
+            </select>
+          </label>
+          <button type="button" class="weapon-del-toggle-btn" data-armor-del-bonus="${escapeHtml(b.id)}">Remove</button>
+        </div>
+      `
+    )
+    .join("");
 
   root.mainCombatStrip.innerHTML = `
     <div class="row strip-row">
-      <span class="strip-group">
-        <label class="strip-label">HP: <input id="strip-hp-current" type="number" value="${state.base.hp.current}" /></label>
-        <span>/ ${state.derived.hp.max}</span>
-        <label class="strip-label">Temp HP: <input id="strip-hp-temp" type="number" value="${state.base.hp.temp}" /></label>
-      </span>
-      <span class="strip-group">
-        <span class="defense-pill ${modTone(speedModTotal)}">Speed ${Number(state.derived.speed || state.base.baseSpeed || 0)} ft</span>
+      <span class="base-top-layout">
+        <span class="ac-square-wrap">
+          <button type="button" class="defense-pill defense-pill-ac defense-pill-ac-big roll-pill ${modTone(acModTotal)} ${state.base.toggles?.raiseShield ? "shield-active" : ""}" data-roll-name="AC" data-roll-bonus="${acBonus}">AC ${state.derived.defense.ac}</button>
+        </span>
+        <span class="health-grid">
+          <label class="strip-label health-cell-label"><span>HP:</span><input id="strip-hp-current" type="number" value="${state.base.hp.current}" /></label>
+          <label class="strip-label health-cell-label"><span>Temp HP:</span><input id="strip-hp-temp" type="number" value="${state.base.hp.temp}" /></label>
+          <span class="health-cell-inline">
+            <button type="button" class="mini-btn" id="strip-damage-apply-btn">Damage</button>
+            <label class="strip-label"><input id="strip-damage-input" type="number" value="" /></label>
+          </span>
+          <span class="health-cell-inline">
+            <button type="button" class="mini-btn" id="strip-healing-apply-btn">Heal</button>
+            <label class="strip-label"><input id="strip-healing-input" type="number" value="" /></label>
+          </span>
+        </span>
       </span>
     </div>
     <div class="row strip-row">
       <span class="defense-group">
-        <button type="button" class="defense-pill roll-pill ${modTone(fortModTotal)}" data-roll-name="Fortitude" data-roll-bonus="${fortBonus}">+${fortBonus} Fortitude</button>
-        <button type="button" class="defense-pill roll-pill ${modTone(reflexModTotal)}" data-roll-name="Reflex" data-roll-bonus="${reflexBonus}">+${reflexBonus} Reflex</button>
-        <button type="button" class="defense-pill roll-pill ${modTone(willModTotal)}" data-roll-name="Will" data-roll-bonus="${willBonus}">+${willBonus} Will</button>
-      </span>
-    </div>
-    <div class="row strip-row">
-      <span class="defense-group">
-        <button type="button" class="defense-pill defense-pill-ac roll-pill ${modTone(acModTotal)} ${state.base.toggles?.raiseShield ? "shield-active" : ""}" data-roll-name="AC" data-roll-bonus="${acBonus}">AC${state.derived.defense.ac}</button>
         <label class="strip-label">
           <input id="strip-raise-shield" type="checkbox" ${state.base.toggles?.raiseShield ? "checked" : ""} />
           Shield/ Parry
         </label>
         <button type="button" class="mini-btn" id="strip-raise-shield-settings-btn" aria-label="Shield settings">⚙</button>
+        <button type="button" class="mini-btn" data-armor-settings-open="true" aria-label="Armor settings">⚙</button>
         <div class="strip-inline-settings ${state.ui.shieldSettingsOpen ? "" : "hidden"}" id="strip-raise-shield-settings">
           <label>Circumstance bonus
             <input id="strip-raise-shield-bonus" type="number" min="0" step="1" value="${Number(state.base.toggles?.raiseShieldBonus || 1)}" />
           </label>
         </div>
+      </span>
+    </div>
+    <hr class="base-separator" />
+    <div class="row strip-row">
+      <span class="defense-group">
+        <button type="button" class="defense-pill roll-pill ${modTone(fortModTotal)}" data-roll-name="Fortitude" data-roll-bonus="${fortBonus}">+${fortBonus} Fortitude</button>
+        <button type="button" class="defense-pill roll-pill ${modTone(reflexModTotal)}" data-roll-name="Reflex" data-roll-bonus="${reflexBonus}">+${reflexBonus} Reflex</button>
+        <button type="button" class="defense-pill roll-pill ${modTone(willModTotal)}" data-roll-name="Will" data-roll-bonus="${willBonus}">+${willBonus} Will</button>
         <button type="button" class="defense-pill roll-pill ${modTone(classDcModTotal)}" data-roll-name="Class DC" data-roll-bonus="${classDcBonus}">Class DC ${state.derived.classDc}</button>
       </span>
+    </div>
+    <div class="weapon-editor-popup ${state.ui.armorSettingsOpen ? "" : "hidden"}" id="armor-settings-popup">
+      <div class="weapon-editor-card armor-editor-card">
+        <p class="section-header">Armor</p>
+        <div class="weapon-editor-grid">
+          <label>Name <input data-armor-field="name" value="${escapeHtml(armor.name)}" /></label>
+          <label>Proficiency
+            <select data-armor-field="armorType">
+              <option value="unarmored" ${String(state.base.armorType || "unarmored") === "unarmored" ? "selected" : ""}>Unarmored</option>
+              <option value="light" ${state.base.armorType === "light" ? "selected" : ""}>Light Armor</option>
+              <option value="medium" ${state.base.armorType === "medium" ? "selected" : ""}>Medium Armor</option>
+              <option value="heavy" ${state.base.armorType === "heavy" ? "selected" : ""}>Heavy Armor</option>
+            </select>
+          </label>
+          <label>Group <input data-armor-field="group" value="${escapeHtml(armor.group)}" /></label>
+          <label>Bulk <input data-armor-field="bulk" value="${escapeHtml(armor.bulk)}" /></label>
+          <label>AC bonus <input data-armor-field="acBonus" type="number" step="1" value="${armor.acBonus}" /></label>
+          <label>Dex cap <input data-armor-field="dexCap" type="number" step="1" value="${armor.dexCap}" /></label>
+          <label>Check penalty <input data-armor-field="checkPenalty" type="number" step="1" value="${armor.checkPenalty}" /></label>
+          <label>Speed penalty <input data-armor-field="speedPenalty" type="number" step="1" value="${armor.speedPenalty}" /></label>
+        </div>
+        <div class="row">
+          <label>Strength requirement <input data-armor-field="strengthRequirement" type="number" step="1" value="${armor.strengthRequirement}" /></label>
+        </div>
+        <hr class="section-divider" />
+        <p class="section-header">Always-on Armor Bonuses</p>
+        ${armorBonusRows || `<p class="muted">No armor bonuses yet.</p>`}
+        <div class="row"><button type="button" data-armor-add-bonus>Add armor bonus</button></div>
+        <div class="row">
+          <label>Enchantments <input data-armor-field="enchantments" value="${escapeHtml(armor.enchantments)}" /></label>
+        </div>
+        <div class="row">
+          <label>Modifiers (supports $variables)
+            <input data-armor-field="modifiers" ${armorVarAssist.listAttr} value="${escapeHtml(armor.modifiers)}" placeholder="$level-1" />
+          </label>
+        </div>
+        ${armorVarAssist.hintHtml}
+        ${armorVarAssist.datalistHtml}
+        <p class="muted">Resolved modifier: ${Number(armor.modifierValue || 0) >= 0 ? "+" : ""}${Number(armor.modifierValue || 0)}</p>
+        <div class="row">
+          <button type="button" id="armor-settings-close-btn">Done</button>
+        </div>
+      </div>
     </div>
   `;
   if (root.mainInitiativeStrip) {
@@ -1153,6 +1497,7 @@ function renderOverview(state) {
         <span class="strip-group strip-pill-group">
           <button type="button" class="defense-pill roll-pill ${modTone(initiativeModTotal)}" data-roll-name="Initiative" data-roll-bonus="${state.derived.initiative}">+${state.derived.initiative} Initiative</button>
           <button type="button" class="defense-pill roll-pill ${modTone(perceptionModTotal)}" data-roll-name="Perception" data-roll-bonus="${perceptionBonus}">+${perceptionBonus} Perception</button>
+          <span class="defense-pill ${modTone(speedModTotal)}">Speed ${Number(state.derived.speed || state.base.baseSpeed || 0)} ft</span>
         </span>
       </div>
     `;
@@ -1231,16 +1576,12 @@ function renderOverview(state) {
     const visibleRows = tableRows.filter((m) => m.showInOverview !== false);
     const rows = visibleRows
       .map((m) => {
-        const effectText = Array.isArray(m.effectsBatches) && m.effectsBatches.length
-          ? m.effectsBatches.map((b) => `${b.target || "all"} / ${b.type || "untyped"} / ${b.effect || "0"}`).join(" + ")
-          : String(m.effect ?? m.value ?? "");
         return `<div class="modifier-row-card">
           <div class="modifier-row-main">
             <label class="modifier-onoff">
               <input type="checkbox" data-mod-enabled-toggle="${m.id}" ${m.enabled === false ? "" : "checked"} />
             </label>
             <strong>${escapeHtml(m.label || "Modifier")}</strong>
-            <span class="muted">${escapeHtml(effectText || "0")}</span>
             ${
               m.levelConfig
                 ? `<span class="muted">L${Number(m.level || m.levelConfig?.min || 1)}</span>`
@@ -1795,20 +2136,31 @@ function renderOverview(state) {
   });
 
   const defaultWeapon = createInitialState().weaponWidget;
-  const renderDamageEditorRow = (damage) => `
+  const renderDamageEditorRow = (damage, varListAttr = "") => `
     <div class="row weapon-editor-row">
       <label>Label <input data-ww-kind="damage" data-ww-id="${damage.id}" data-ww-field="label" value="${escapeHtml(damage.label)}" /></label>
-      <label>Formula <input data-ww-kind="damage" data-ww-id="${damage.id}" data-ww-field="formula" value="${escapeHtml(damage.formula)}" /></label>
+      <label>Formula <input data-ww-kind="damage" data-ww-id="${damage.id}" data-ww-field="formula" ${varListAttr} value="${escapeHtml(damage.formula)}" /></label>
     </div>`;
   const weaponContainers = [...document.querySelectorAll("[data-weapon-widget-id]")];
   root.weaponWidget = weaponContainers[0] || null;
   weaponContainers.forEach((el) => {
     const blockId = el.dataset.weaponWidgetId || "weapon-widget";
+    const weaponVarAssist = renderVariableAssist(
+      `weapon-variable-options-${String(blockId).replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+      variableTokens,
+      'input[data-ww-kind="damage"][data-ww-field="formula"],input[data-ww-kind="damageToggle"][data-ww-field="formula"]'
+    );
     const widget = structuredClone(state.weaponWidgets?.[blockId] || state.weaponWidgets?.["weapon-widget"] || defaultWeapon);
     const attackGroupName = String(widget.groupName || "Attack Widget").trim() || "Attack Widget";
-    const attackBonusTotal = (widget.attackBonuses || [])
+    const attackBonusRows = (widget.attackBonuses || [])
       .filter((b) => b.alwaysOn || b.on)
-      .reduce((sum, b) => sum + Number(b.bonus || 0), 0);
+      .map((b) => ({
+        enabled: true,
+        target: "attack",
+        type: String(b.type || "item"),
+        effect: String(Number(b.bonus || 0)),
+      }));
+    const attackBonusTotal = summarizeModifiers(attackBonusRows, "attack").total;
     const attackModTotal = summarizeModifiers(modifierRowsFlat, "attack").total;
     const damageModTotal = summarizeModifiers(modifierRowsFlat, "damage").total;
     const strikeBase =
@@ -1858,14 +2210,19 @@ function renderOverview(state) {
       )
       .join("");
     const damageRows = widget.damages || [];
-    const hitEditorRow = damageRows[0] ? renderDamageEditorRow(damageRows[0]) : "";
-    const critEditorRow = damageRows[1] ? renderDamageEditorRow(damageRows[1]) : "";
+    const hitEditorRow = damageRows[0] ? renderDamageEditorRow(damageRows[0], weaponVarAssist.listAttr) : "";
+    const critEditorRow = damageRows[1] ? renderDamageEditorRow(damageRows[1], weaponVarAssist.listAttr) : "";
     const toggleEditorRows = (widget.damageToggles || [])
       .map(
         (t) => `
         <div class="weapon-bonus-row">
           <label>Label <input data-ww-kind="damageToggle" data-ww-id="${t.id}" data-ww-field="label" value="${escapeHtml(t.label)}" /></label>
-          <label>Bonus dice <input data-ww-kind="damageToggle" data-ww-id="${t.id}" data-ww-field="formula" value="${escapeHtml(t.formula)}" placeholder="e.g. 2d6 or +4" /></label>
+          <label>Bonus dice <input data-ww-kind="damageToggle" data-ww-id="${t.id}" data-ww-field="formula" ${weaponVarAssist.listAttr} value="${escapeHtml(t.formula)}" placeholder="e.g. 2d6 or +4" /></label>
+          <label>Type
+            <select data-ww-kind="damageToggle" data-ww-id="${t.id}" data-ww-field="type">
+              ${MODIFIER_TYPES.map((type) => `<option value="${type}" ${String(t.type || "untyped") === type ? "selected" : ""}>${type}</option>`).join("")}
+            </select>
+          </label>
           <label class="weapon-toggle-inline"><input type="checkbox" data-ww-kind="damageToggle" data-ww-id="${t.id}" data-ww-field="alwaysOn" ${
             t.alwaysOn ? "checked" : ""
           } /> always on</label>
@@ -1883,6 +2240,11 @@ function renderOverview(state) {
         <div class="weapon-bonus-row">
           <label>Label <input data-ww-atk-bonus-id="${b.id}" data-ww-field="label" value="${escapeHtml(b.label)}" /></label>
           <label>Bonus <input data-ww-atk-bonus-id="${b.id}" data-ww-field="bonus" type="number" value="${Number(b.bonus || 0)}" /></label>
+          <label>Type
+            <select data-ww-atk-bonus-id="${b.id}" data-ww-field="type">
+              ${MODIFIER_TYPES.map((type) => `<option value="${type}" ${String(b.type || "item") === type ? "selected" : ""}>${type}</option>`).join("")}
+            </select>
+          </label>
           <label class="weapon-toggle-inline"><input type="checkbox" data-ww-atk-bonus-id="${b.id}" data-ww-field="alwaysOn" ${
             b.alwaysOn ? "checked" : ""
           } /> always on</label>
@@ -1968,6 +2330,8 @@ function renderOverview(state) {
       <p class="section-header">Damage bonuses</p>
       <p class="muted weapon-crit-hint">Checked bonuses apply to hit; each bonus can be set to x2 on crit or stay single.</p>
       ${toggleEditorRows || `<p class="muted">No toggles yet — add one below.</p>`}
+      ${weaponVarAssist.hintHtml}
+      ${weaponVarAssist.datalistHtml}
       <button type="button" data-ww-add-toggle>Add toggle</button>
       <div class="row">
         <label>Group name <input data-ww-field="groupName" value="${escapeHtml(attackGroupName)}" /></label>
@@ -1984,13 +2348,70 @@ function renderOverview(state) {
   });
   document.querySelector("#strip-hp-current")?.addEventListener("change", (event) => {
     store.patch((draft) => {
-      draft.base.hp.current = Number(event.currentTarget.value || 0);
+      const hpMax = Math.max(0, Number(draft.derived?.hp?.max || 0));
+      const raw = Number(event.currentTarget.value || 0);
+      draft.base.hp.current = Math.max(0, Math.min(hpMax, raw));
     });
   });
   document.querySelector("#strip-hp-temp")?.addEventListener("change", (event) => {
     store.patch((draft) => {
-      draft.base.hp.temp = Number(event.currentTarget.value || 0);
+      draft.base.hp.temp = Math.max(0, Number(event.currentTarget.value || 0));
     });
+  });
+  document.querySelector("#strip-damage-apply-btn")?.addEventListener("click", () => {
+    const amount = Math.max(0, Number(document.querySelector("#strip-damage-input")?.value || 0));
+    if (!amount) return;
+    const prev = store.getState();
+    const prevTemp = Math.max(0, Number(prev.base?.hp?.temp || 0));
+    const prevHp = Math.max(0, Number(prev.base?.hp?.current || 0));
+    store.patch((draft) => {
+      const currentTemp = Math.max(0, Number(draft.base.hp.temp || 0));
+      const currentHp = Math.max(0, Number(draft.base.hp.current || 0));
+      const soak = Math.min(currentTemp, amount);
+      const overflow = Math.max(0, amount - soak);
+      draft.base.hp.temp = currentTemp - soak;
+      draft.base.hp.current = Math.max(0, currentHp - overflow);
+    });
+    const next = store.getState();
+    const nextTemp = Math.max(0, Number(next.base?.hp?.temp || 0));
+    const nextHp = Math.max(0, Number(next.base?.hp?.current || 0));
+    addRollLog(
+      {
+        name: "Damage",
+        message: `${amount} (Temp ${prevTemp}->${nextTemp}, HP ${prevHp}->${nextHp})`,
+      },
+      false
+    );
+    store.patch((draft) => {
+      draft.ui.rollLogOpen = true;
+    });
+    const input = document.querySelector("#strip-damage-input");
+    if (input) input.value = "";
+  });
+  document.querySelector("#strip-healing-apply-btn")?.addEventListener("click", () => {
+    const amount = Math.max(0, Number(document.querySelector("#strip-healing-input")?.value || 0));
+    if (!amount) return;
+    const prev = store.getState();
+    const prevHp = Math.max(0, Number(prev.base?.hp?.current || 0));
+    store.patch((draft) => {
+      const hpMax = Math.max(0, Number(draft.derived?.hp?.max || 0));
+      const currentHp = Math.max(0, Number(draft.base.hp.current || 0));
+      draft.base.hp.current = Math.min(hpMax, currentHp + amount);
+    });
+    const next = store.getState();
+    const nextHp = Math.max(0, Number(next.base?.hp?.current || 0));
+    addRollLog(
+      {
+        name: "Healing",
+        message: `${amount} (HP ${prevHp}->${nextHp})`,
+      },
+      false
+    );
+    store.patch((draft) => {
+      draft.ui.rollLogOpen = true;
+    });
+    const input = document.querySelector("#strip-healing-input");
+    if (input) input.value = "";
   });
   document.querySelector("#strip-raise-shield")?.addEventListener("change", (event) => {
     store.patch((draft) => {
@@ -2002,11 +2423,110 @@ function renderOverview(state) {
       draft.ui.shieldSettingsOpen = !draft.ui.shieldSettingsOpen;
     });
   });
+  document.querySelectorAll("[data-armor-settings-open]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      store.patch((draft) => {
+        draft.ui.armorSettingsOpen = !draft.ui.armorSettingsOpen;
+      });
+    });
+  });
+  document.querySelector("#armor-settings-close-btn")?.addEventListener("click", () => {
+    store.patch((draft) => {
+      draft.ui.armorSettingsOpen = false;
+    });
+  });
   document.querySelector("#strip-raise-shield-bonus")?.addEventListener("change", (event) => {
     store.patch((draft) => {
       draft.base.toggles.raiseShieldBonus = Math.max(0, Number(event.currentTarget.value || 0));
     });
   });
+  document.querySelectorAll("input[data-armor-field],select[data-armor-field]").forEach((el) => {
+    el.addEventListener("change", (event) => {
+      const target = event.currentTarget;
+      const field = target.dataset.armorField;
+      store.patch((draft) => {
+        draft.base.armor = coerceArmorState(draft.base.armor);
+        if (field === "armorType") {
+          draft.base.armorType = String(target.value || "unarmored");
+          return;
+        }
+        if (field === "acBonus" || field === "dexCap" || field === "checkPenalty" || field === "speedPenalty" || field === "strengthRequirement") {
+          draft.base.armor[field] = Number(target.value || 0);
+          return;
+        }
+        if (field === "modifiers") {
+          const formula = String(target.value || "").trim();
+          draft.base.armor.modifiers = formula;
+          if (!formula) {
+            draft.base.armor.modifierValue = 0;
+            return;
+          }
+          try {
+            const vars = resolveVariableMap(store.getState());
+            const resolver = (name) => vars[String(name || "").toLowerCase().replace(/-/g, "_")];
+            const resolved = evaluateExpression(formula, resolver, {
+              resolveTypedSummary: (target) => summarizeModifiers(modifierRowsFlat, target),
+            });
+            const value = Number(Function(`"use strict"; return (${resolved});`)());
+            draft.base.armor.modifierValue = Number.isFinite(value) ? value : 0;
+          } catch (_err) {
+            draft.base.armor.modifierValue = 0;
+          }
+          return;
+        }
+        draft.base.armor[field] = String(target.value || "");
+      });
+    });
+  });
+  document.querySelector("[data-armor-add-bonus]")?.addEventListener("click", () => {
+    store.patch((draft) => {
+      draft.base.armor = coerceArmorState(draft.base.armor);
+      draft.base.armor.bonuses = draft.base.armor.bonuses || [];
+      draft.base.armor.bonuses.push({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        label: "Armor bonus",
+        bonus: 1,
+        type: "item",
+      });
+    });
+  });
+  document.querySelectorAll("input[data-armor-bonus-id],select[data-armor-bonus-id]").forEach((el) => {
+    el.addEventListener("change", (event) => {
+      const id = el.dataset.armorBonusId;
+      const field = el.dataset.armorBonusField;
+      const target = event.currentTarget;
+      store.patch((draft) => {
+        draft.base.armor = coerceArmorState(draft.base.armor);
+        const row = (draft.base.armor.bonuses || []).find((b) => b.id === id);
+        if (!row) return;
+        if (field === "bonus") {
+          row.bonus = Number(target.value || 0);
+        } else if (field === "type") {
+          const type = String(target.value || "item").toLowerCase();
+          row.type = MODIFIER_TYPES.includes(type) ? type : "item";
+        } else {
+          row[field] = String(target.value || "");
+        }
+      });
+    });
+  });
+  document.querySelectorAll("[data-armor-del-bonus]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.armorDelBonus;
+      store.patch((draft) => {
+        draft.base.armor = coerceArmorState(draft.base.armor);
+        draft.base.armor.bonuses = (draft.base.armor.bonuses || []).filter((b) => b.id !== id);
+      });
+    });
+  });
+  document.querySelector("#armor-settings-popup")?.addEventListener("click", (event) => {
+    if (!event.target.classList.contains("weapon-editor-popup")) return;
+    store.patch((draft) => {
+      draft.ui.armorSettingsOpen = false;
+    });
+  });
+  bindVariableInsertHandlers(document);
+  bindVariableAutocomplete(document, variableTokens);
 
   document.querySelectorAll(".roll-pill").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2035,8 +2555,20 @@ function renderOverview(state) {
       const formula = button.dataset.rollFormula;
       if (formula) {
         try {
-          const { total, breakdown } = rollDiceExpression(formula);
-          addRollLog({ name, message: `${total} (${breakdown.join(", ")})` }, false);
+          const vars = resolveVariableMap(store.getState());
+          const resolver = (varName) =>
+            vars[String(varName || "").toLowerCase().replace(/-/g, "_")];
+          const resolved = evaluateExpression(formula, resolver, {
+            resolveTypedSummary: (target) => summarizeModifiers(modifierRowsFlat, target),
+          });
+          const { total, breakdown } = rollDiceExpression(resolved);
+          addRollLog(
+            {
+              name,
+              message: `${total} (${breakdown.join(", ")}${resolved !== formula ? `; ${resolved}` : ""})`,
+            },
+            false
+          );
         } catch (_err) {
           addRollLog({ name, message: `Failed roll: ${formula}` }, true);
         }
@@ -2151,6 +2683,7 @@ function renderOverview(state) {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           label: "Bonus",
           formula: "1d6",
+          type: "untyped",
           on: false,
           alwaysOn: false,
           multiplyOnCrit: true,
@@ -2167,7 +2700,7 @@ function renderOverview(state) {
         });
       });
     });
-    container.querySelectorAll("input[data-ww-atk-bonus-id]").forEach((el) => {
+    container.querySelectorAll("input[data-ww-atk-bonus-id],select[data-ww-atk-bonus-id]").forEach((el) => {
       el.addEventListener("change", (event) => {
         const id = el.dataset.wwAtkBonusId;
         const field = el.dataset.wwField;
@@ -2190,6 +2723,7 @@ function renderOverview(state) {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           label: "Attack bonus",
           bonus: 1,
+          type: "item",
           on: true,
           alwaysOn: false,
         });
@@ -2218,6 +2752,11 @@ function renderOverview(state) {
   root.mainWidgets = mainWidgetContainers[0] || null;
   mainWidgetContainers.forEach((container) => {
     const groupId = container.dataset.mainWidgetsId || "main-widgets";
+    const customVarAssist = renderVariableAssist(
+      `custom-variable-options-${String(groupId).replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+      variableTokens,
+      "#cw-roll1,#cw-roll2"
+    );
     const group = state.widgetGroups?.[groupId] || { title: "Flex Widget", widgets: [] };
     const editId = state.ui.customWidgetGroupId === groupId ? state.ui.customWidgetEditingId : null;
     const editing = (group.widgets || []).find((w) => w.id === editId) || null;
@@ -2276,10 +2815,12 @@ function renderOverview(state) {
           <div class="row"><label>Title <input id="cw-title" value="${escapeHtml(editing?.title || "")}" /></label></div>
           <label>Content <textarea id="cw-content" placeholder="Any text content.">${escapeHtml(editing?.content || "")}</textarea></label>
           <div class="row">
-            <label>Roll 1 <input id="cw-roll1" value="${escapeHtml(editing?.roll1 || "")}" placeholder="Attack: 1d20 + $str + 12" /></label>
-            <label>Roll 2 <input id="cw-roll2" value="${escapeHtml(editing?.roll2 || "")}" placeholder="Damage: 2d6 + $str" /></label>
+            <label>Roll 1 <input id="cw-roll1" ${customVarAssist.listAttr} value="${escapeHtml(editing?.roll1 || "")}" placeholder="Attack: 1d20 + $str + 12" /></label>
+            <label>Roll 2 <input id="cw-roll2" ${customVarAssist.listAttr} value="${escapeHtml(editing?.roll2 || "")}" placeholder="Damage: 2d6 + $str" /></label>
             <label>Toggle count <input id="cw-toggle-count" type="number" min="0" max="5" step="1" value="${Math.min(5, editing?.toggleCount || 0)}" /></label>
           </div>
+          ${customVarAssist.hintHtml}
+          ${customVarAssist.datalistHtml}
           <div class="row"><button type="button" id="cw-save-btn">Save</button><button type="button" id="cw-cancel-btn">Cancel</button></div>
           ${editing ? `<div class="row widget-delete-row"><button type="button" id="cw-delete-btn" class="danger-btn">Delete Widget</button></div>` : ""}
         </div>
@@ -2410,9 +2951,11 @@ function renderOverview(state) {
         const formula = btn.dataset.cwRollFormula || "";
         try {
           const vars = resolveVariableMap(store.getState());
-          const resolver = (name) => vars[String(name || "").toLowerCase()];
+          const resolver = (name) => vars[String(name || "").toLowerCase().replace(/-/g, "_")];
           const resolvedLabel = expandTemplate(label, resolver);
-          const resolved = evaluateExpression(formula, resolver);
+          const resolved = evaluateExpression(formula, resolver, {
+            resolveTypedSummary: (target) => summarizeModifiers(modifierRowsFlat, target),
+          });
           const { total, breakdown } = rollDiceExpression(resolved);
           const widgetName =
             (store.getState().widgetGroups?.[groupId]?.widgets || []).find((w) => w.id === wid)?.title || "Widget";
@@ -2641,8 +3184,44 @@ root.rollLogToggle.addEventListener("click", () => {
   });
 });
 
+root.quickRollToggle?.addEventListener("click", () => {
+  store.patch((draft) => {
+    draft.ui.quickRollOpen = !draft.ui.quickRollOpen;
+  });
+});
+
 root.rollLogClose.addEventListener("click", () => {
   store.patch((draft) => {
     draft.ui.rollLogOpen = false;
   });
 });
+
+root.quickRollClose?.addEventListener("click", () => {
+  store.patch((draft) => {
+    draft.ui.quickRollOpen = false;
+  });
+});
+
+root.quickRollD20Btn?.addEventListener("click", () => {
+  const d20 = Math.floor(Math.random() * 20) + 1;
+  addRollLog({ name: "Quick Roll", message: `${d20} (1d20: ${d20})` }, false);
+  store.patch((draft) => {
+    draft.ui.rollLogOpen = true;
+  });
+});
+
+root.quickRollApplyBtn?.addEventListener("click", () => {
+  const count = Math.max(1, Number(root.quickRollCount?.value || 1));
+  const sides = Math.max(2, Number(root.quickRollSides?.value || 6));
+  const formula = `${count}d${sides}`;
+  try {
+    const { total, breakdown } = rollDiceExpression(formula);
+    addRollLog({ name: "Quick Roll", message: `${total} (${breakdown.join(", ")})` }, false);
+    store.patch((draft) => {
+      draft.ui.rollLogOpen = true;
+    });
+  } catch (_err) {
+    addRollLog({ name: "Quick Roll", message: `Failed roll: ${formula}` }, true);
+  }
+});
+

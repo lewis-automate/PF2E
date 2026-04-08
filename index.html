@@ -42,10 +42,28 @@
 
     </main>
 
-    <button id="roll-log-toggle" class="roll-log-toggle" type="button">Roll Log</button>
+    <div class="floating-actions">
+      <button id="quick-roll-toggle" class="roll-log-toggle" type="button">Roll</button>
+      <button id="roll-log-toggle" class="roll-log-toggle" type="button">Log</button>
+    </div>
+    <aside id="quick-roll-popup" class="roll-log-popup quick-roll-popup" aria-hidden="true">
+      <div class="roll-log-head">
+        <h2>Quick Roll</h2>
+        <button id="quick-roll-close" type="button">Close</button>
+      </div>
+      <div class="row">
+        <button id="quick-roll-d20-btn" type="button">Roll d20</button>
+      </div>
+      <div class="row">
+        <label><input id="quick-roll-count" type="number" min="1" step="1" value="1" /></label>
+        <span>d</span>
+        <label><input id="quick-roll-sides" type="number" min="2" step="1" value="6" /></label>
+        <button id="quick-roll-apply-btn" type="button">Roll</button>
+      </div>
+    </aside>
     <aside id="roll-log-popup" class="roll-log-popup" aria-hidden="true">
       <div class="roll-log-head">
-        <h2>Roll Log</h2>
+        <h2>Log</h2>
         <button id="roll-log-close" type="button">Close</button>
       </div>
       <div id="roll-log"></div>
