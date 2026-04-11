@@ -167,15 +167,20 @@ export function calculateDerived(base) {
   // PF2E default initiative is Perception unless another skill is explicitly used.
   const initiative = defense.perception - 10 + modFor("initiative");
   const skills = Object.fromEntries(
-    Object.entries(skillAbilities).map(([skill, ability]) => [
-      skill,
-      mods[ability] +
-        level +
-        profRankToBonus(base.proficiencies?.[skill] || "untrained") +
-        modFor("skill") +
-        modFor(`skill:${skill}`) +
-        (["acrobatics", "athletics", "stealth", "thievery"].includes(skill) ? -armorCheckPenalty : 0),
-    ])
+    Object.entries(skillAbilities).map(([skill, ability]) => {
+      const rank = base.proficiencies?.[skill] || "untrained";
+      // PF2e: untrained checks use ability mod only (no level); trained+ add level + proficiency.
+      const levelForSkill = rank === "untrained" ? 0 : level;
+      return [
+        skill,
+        mods[ability] +
+          levelForSkill +
+          profRankToBonus(rank) +
+          modFor("skill") +
+          modFor(`skill:${skill}`) +
+          (["acrobatics", "athletics", "stealth", "thievery"].includes(skill) ? -armorCheckPenalty : 0),
+      ];
+    })
   );
   defense.ac += modFor("ac");
   defense.fortitude += modFor("fortitude");
