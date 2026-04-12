@@ -8,36 +8,14 @@ import {
   deleteCharacterById,
 } from "./state/persist.js";
 import { profRankToBonus, SKILL_TO_ABILITY } from "./engine/calc.js";
-import { MODIFIER_TYPES, summarizeModifiers, selectModifierEffects } from "./engine/modifiers.js";
+import { MODIFIER_TYPES, summarizeModifiers, selectModifierEffects, flattenModifierRows } from "./engine/modifiers.js";
+import { coerceArmorState } from "./engine/armorState.js";
 import { rollDiceExpression } from "./engine/roller.js";
 import { buildWeaponHitFormula, buildWeaponCritFormula } from "./engine/weaponDamage.js";
 import { evaluateExpression, expandTemplate } from "./engine/formula.js";
 import { renderBasePanel } from "./ui/basePanel.js";
-import { resolveVariableMap } from "./ui/variablesPanel.js";
-
-function escapeHtml(text) {
-  return String(text ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function listAvailableVariableTokens(state) {
-  let map = {};
-  try {
-    map = resolveVariableMap(state) || {};
-  } catch (_err) {
-    map = {};
-  }
-  const canonical = new Set(
-    Object.keys(map).map((k) => String(k || "").trim().toLowerCase().replace(/-/g, "_")).filter(Boolean)
-  );
-  canonical.add("attack_widget_header_name");
-  return [...canonical]
-    .sort((a, b) => a.localeCompare(b))
-    .map((name) => `$${name}`);
-}
+import { resolveVariableMap, listAvailableVariableTokens } from "./ui/variablesPanel.js";
+import { renderVariableAssist, escapeHtml } from "./ui/variableAssist.js";
 
 function insertTokenAtCursor(el, token) {
   if (!el) return;
@@ -195,56 +173,6 @@ function bindVariableInsertHandlers(scope = document) {
   });
 }
 
-function renderVariableAssist(listId, tokens, targetSelector = "") {
-  const options = tokens.map((token) => `<option value="${escapeHtml(token)}"></option>`).join("");
-  const shown = tokens.slice(0, 18);
-  const chips = shown
-    .map(
-      (token) =>
-        `<button type="button" class="mini-btn variable-chip-btn" data-var-token="${escapeHtml(token)}" data-var-target="${escapeHtml(targetSelector)}">${escapeHtml(token)}</button>`
-    )
-    .join(" ");
-  return {
-    listAttr: `list="${escapeHtml(listId)}"`,
-    datalistHtml: `<datalist id="${escapeHtml(listId)}">${options}</datalist>`,
-    hintHtml: `<div class="muted variable-hint"><span class="variable-help">Click a variable to insert at cursor, or type <code>$</code> then letters. Typed bonus syntax: <code>[circumstance:1]</code>.</span><br />Variables: ${chips || `<code>$level</code>`}${tokens.length > shown.length ? " ..." : ""} <span class="muted">(@ also works)</span></div>`,
-  };
-}
-
-function coerceArmorState(armor) {
-  const base = armor && typeof armor === "object" ? armor : {};
-  const legacyPotency = Number(base.potencyRune || 0);
-  const existingBonuses = Array.isArray(base.bonuses) ? base.bonuses : [];
-  const bonuses = existingBonuses.map((b) => ({
-    id: String(b?.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`),
-    label: String(b?.label || "Armor bonus"),
-    bonus: Number(b?.bonus || 0),
-    type: MODIFIER_TYPES.includes(String(b?.type || "").toLowerCase()) ? String(b.type).toLowerCase() : "item",
-  }));
-  if (legacyPotency !== 0 && !bonuses.length) {
-    bonuses.push({
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      label: "Potency",
-      bonus: legacyPotency,
-      type: "item",
-    });
-  }
-  return {
-    name: String(base.name || ""),
-    group: String(base.group || ""),
-    bulk: String(base.bulk || ""),
-    acBonus: Number(base.acBonus || 0),
-    dexCap: Number.isFinite(Number(base.dexCap)) ? Number(base.dexCap) : 5,
-    checkPenalty: Number(base.checkPenalty || 0),
-    speedPenalty: Number(base.speedPenalty || 0),
-    strengthRequirement: Number(base.strengthRequirement || 0),
-    bonuses,
-    enchantments: String(base.enchantments || ""),
-    modifiers: String(base.modifiers || ""),
-    modifierValue: Number(base.modifierValue || 0),
-  };
-}
-
 const root = {
   base: document.querySelector("#base-panel"),
   characterHeaderName: document.querySelector("#character-header-name"),
@@ -312,6 +240,9 @@ if (seeded.base && !seeded.base.skillAbilityOverrides) {
 }
 if (seeded.base && !seeded.base.customSkillAbilities) {
   seeded.base.customSkillAbilities = {};
+}
+if (seeded.base && !Array.isArray(seeded.base.favoriteSkills)) {
+  seeded.base.favoriteSkills = [];
 }
 if (seeded.base && !Array.isArray(seeded.base.modifiers)) {
   seeded.base.modifiers = [];
@@ -445,9 +376,6 @@ if (seeded.ui && typeof seeded.ui.characterManagerOpen !== "boolean") {
 }
 if (seeded.ui && typeof seeded.ui.shieldSettingsOpen !== "boolean") {
   seeded.ui.shieldSettingsOpen = false;
-}
-if (seeded.ui && typeof seeded.ui.armorSettingsOpen !== "boolean") {
-  seeded.ui.armorSettingsOpen = false;
 }
 if (seeded.ui && typeof seeded.ui.quickRollOpen !== "boolean") {
   seeded.ui.quickRollOpen = false;
@@ -851,25 +779,6 @@ function parseRollField(raw, fallbackLabel) {
     if (left && right) return { label: left, formula: right };
   }
   return { label: fallbackLabel, formula: text };
-}
-
-function flattenModifierRows(base) {
-  const raw = base.modifierGroups && typeof base.modifierGroups === "object"
-    ? Object.values(base.modifierGroups).flatMap((g) => (Array.isArray(g?.rows) ? g.rows : []))
-    : base.modifiers || [];
-  return raw.flatMap((row) => {
-    if (Array.isArray(row?.effectsBatches) && row.effectsBatches.length) {
-      return row.effectsBatches.map((b) => ({
-        enabled: row.enabled !== false && b?.enabled !== false,
-        targets: Array.isArray(b?.targets) ? b.targets : [b?.target || "all"],
-        target: Array.isArray(b?.targets) ? b.targets[0] : b?.target || "all",
-        type: b?.type || "untyped",
-        effect: b?.effect || "0",
-        value: Number(b?.effect || 0),
-      }));
-    }
-    return [row];
-  });
 }
 
 function normalizeOverviewRows(rowsInput) {
@@ -1375,6 +1284,7 @@ function renderOverview(state) {
   const perceptionModTotal = summarizeModifiers(modifierRowsFlat, "perception").total;
   const classDcModTotal = summarizeModifiers(modifierRowsFlat, "classDc").total;
   const skillAllModTotal = summarizeModifiers(modifierRowsFlat, "skill").total;
+  const favoriteSkillRefs = new Set(Array.isArray(state.base.favoriteSkills) ? state.base.favoriteSkills : []);
   const initiativeModTotal = summarizeModifiers(modifierRowsFlat, "initiative").total;
   const speedModTotal = summarizeModifiers(modifierRowsFlat, "speed").total;
   const perceptionBonus = state.derived.defense.perception - 10;
@@ -1383,31 +1293,13 @@ function renderOverview(state) {
   const willBonus = state.derived.defense.will - 10;
   const acBonus = state.derived.defense.ac - 10;
   const classDcBonus = state.derived.classDc - 10;
-  const armor = coerceArmorState(state.base.armor);
   const variableTokens = listAvailableVariableTokens(state);
-  const armorVarAssist = renderVariableAssist("armor-variable-options", variableTokens, 'input[data-armor-field="modifiers"]');
-  const armorBonusRows = (armor.bonuses || [])
-    .map(
-      (b) => `
-        <div class="weapon-bonus-row">
-          <label>Label <input data-armor-bonus-id="${b.id}" data-armor-bonus-field="label" value="${escapeHtml(b.label)}" /></label>
-          <label>Bonus <input data-armor-bonus-id="${b.id}" data-armor-bonus-field="bonus" type="number" value="${Number(b.bonus || 0)}" /></label>
-          <label>Type
-            <select data-armor-bonus-id="${b.id}" data-armor-bonus-field="type">
-              ${MODIFIER_TYPES.map((type) => `<option value="${type}" ${String(b.type || "item") === type ? "selected" : ""}>${type}</option>`).join("")}
-            </select>
-          </label>
-          <button type="button" class="weapon-del-toggle-btn" data-armor-del-bonus="${escapeHtml(b.id)}">Remove</button>
-        </div>
-      `
-    )
-    .join("");
 
   root.mainCombatStrip.innerHTML = `
     <div class="row strip-row">
       <span class="base-top-layout">
         <span class="ac-square-wrap">
-          <button type="button" class="defense-pill defense-pill-ac defense-pill-ac-big roll-pill ${modTone(acModTotal)} ${state.base.toggles?.raiseShield ? "shield-active" : ""}" data-roll-name="AC" data-roll-bonus="${acBonus}">AC ${state.derived.defense.ac}</button>
+          <button type="button" class="defense-pill defense-pill-ac defense-pill-ac-big roll-pill ${modTone(acModTotal)}" data-roll-name="AC" data-roll-bonus="${acBonus}">AC ${state.derived.defense.ac}</button>
         </span>
         <span class="health-grid">
           <label class="strip-label health-cell-label"><span>HP:</span><input id="strip-hp-current" type="number" value="${state.base.hp.current}" /></label>
@@ -1423,21 +1315,6 @@ function renderOverview(state) {
         </span>
       </span>
     </div>
-    <div class="row strip-row">
-      <span class="defense-group">
-        <label class="strip-label">
-          <input id="strip-raise-shield" type="checkbox" ${state.base.toggles?.raiseShield ? "checked" : ""} />
-          Shield/ Parry
-        </label>
-        <button type="button" class="mini-btn" id="strip-raise-shield-settings-btn" aria-label="Shield settings">⚙</button>
-        <button type="button" class="mini-btn" data-armor-settings-open="true" aria-label="Armor settings">⚙</button>
-        <div class="strip-inline-settings ${state.ui.shieldSettingsOpen ? "" : "hidden"}" id="strip-raise-shield-settings">
-          <label>Circumstance bonus
-            <input id="strip-raise-shield-bonus" type="number" min="0" step="1" value="${Number(state.base.toggles?.raiseShieldBonus || 1)}" />
-          </label>
-        </div>
-      </span>
-    </div>
     <hr class="base-separator" />
     <div class="row strip-row">
       <span class="defense-group">
@@ -1446,49 +1323,6 @@ function renderOverview(state) {
         <button type="button" class="defense-pill roll-pill ${modTone(willModTotal)}" data-roll-name="Will" data-roll-bonus="${willBonus}">+${willBonus} Will</button>
         <button type="button" class="defense-pill roll-pill ${modTone(classDcModTotal)}" data-roll-name="Class DC" data-roll-bonus="${classDcBonus}">Class DC ${state.derived.classDc}</button>
       </span>
-    </div>
-    <div class="weapon-editor-popup ${state.ui.armorSettingsOpen ? "" : "hidden"}" id="armor-settings-popup">
-      <div class="weapon-editor-card armor-editor-card">
-        <p class="section-header">Armor</p>
-        <div class="weapon-editor-grid">
-          <label>Name <input data-armor-field="name" value="${escapeHtml(armor.name)}" /></label>
-          <label>Proficiency
-            <select data-armor-field="armorType">
-              <option value="unarmored" ${String(state.base.armorType || "unarmored") === "unarmored" ? "selected" : ""}>Unarmored</option>
-              <option value="light" ${state.base.armorType === "light" ? "selected" : ""}>Light Armor</option>
-              <option value="medium" ${state.base.armorType === "medium" ? "selected" : ""}>Medium Armor</option>
-              <option value="heavy" ${state.base.armorType === "heavy" ? "selected" : ""}>Heavy Armor</option>
-            </select>
-          </label>
-          <label>Group <input data-armor-field="group" value="${escapeHtml(armor.group)}" /></label>
-          <label>Bulk <input data-armor-field="bulk" value="${escapeHtml(armor.bulk)}" /></label>
-          <label>AC bonus <input data-armor-field="acBonus" type="number" step="1" value="${armor.acBonus}" /></label>
-          <label>Dex cap <input data-armor-field="dexCap" type="number" step="1" value="${armor.dexCap}" /></label>
-          <label>Check penalty <input data-armor-field="checkPenalty" type="number" step="1" value="${armor.checkPenalty}" /></label>
-          <label>Speed penalty <input data-armor-field="speedPenalty" type="number" step="1" value="${armor.speedPenalty}" /></label>
-        </div>
-        <div class="row">
-          <label>Strength requirement <input data-armor-field="strengthRequirement" type="number" step="1" value="${armor.strengthRequirement}" /></label>
-        </div>
-        <hr class="section-divider" />
-        <p class="section-header">Always-on Armor Bonuses</p>
-        ${armorBonusRows || `<p class="muted">No armor bonuses yet.</p>`}
-        <div class="row"><button type="button" data-armor-add-bonus>Add armor bonus</button></div>
-        <div class="row">
-          <label>Enchantments <input data-armor-field="enchantments" value="${escapeHtml(armor.enchantments)}" /></label>
-        </div>
-        <div class="row">
-          <label>Modifiers (supports $variables)
-            <input data-armor-field="modifiers" ${armorVarAssist.listAttr} value="${escapeHtml(armor.modifiers)}" placeholder="$level-1" />
-          </label>
-        </div>
-        ${armorVarAssist.hintHtml}
-        ${armorVarAssist.datalistHtml}
-        <p class="muted">Resolved modifier: ${Number(armor.modifierValue || 0) >= 0 ? "+" : ""}${Number(armor.modifierValue || 0)}</p>
-        <div class="row">
-          <button type="button" id="armor-settings-close-btn">Done</button>
-        </div>
-      </div>
     </div>
   `;
   if (root.mainInitiativeStrip) {
@@ -1526,7 +1360,8 @@ function renderOverview(state) {
       const label = `${name[0].toUpperCase()}${name.slice(1)}`;
       const ability = String(state.derived.skillAbilities?.[name] || "str").toUpperCase();
       const skillModTotal = skillAllModTotal + summarizeModifiers(modifierRowsFlat, `skill:${name}`).total;
-      return `<button type="button" class="defense-pill roll-pill skill-roll-pill ${modTone(skillModTotal)}" data-roll-name="${label}" data-roll-bonus="${bonus}">+${bonus} ${label} (${ability})</button>`;
+      const favClass = favoriteSkillRefs.has(name) ? " skill-favorite" : "";
+      return `<button type="button" class="defense-pill roll-pill skill-roll-pill${favClass} ${modTone(skillModTotal)}" data-roll-name="${label}" data-roll-bonus="${bonus}">+${bonus} ${label} (${ability})</button>`;
     })
     .join(" ");
   const customSkillRows = (state.base.customProficiencies?.skill || [])
@@ -1538,7 +1373,8 @@ function renderOverview(state) {
       const bonus = Number(state.base.level || 0) + profRankToBonus(rank) + abilityMod;
       const label = String(entry.name).trim();
       const ability = String(abilityKey).toUpperCase();
-      return `<button type="button" class="defense-pill roll-pill skill-roll-pill custom-skill-roll-pill ${modTone(skillAllModTotal)}" data-roll-name="${escapeHtml(
+      const favClass = favoriteSkillRefs.has(`custom:${entry.id}`) ? " skill-favorite" : "";
+      return `<button type="button" class="defense-pill roll-pill skill-roll-pill custom-skill-roll-pill${favClass} ${modTone(skillAllModTotal)}" data-roll-name="${escapeHtml(
         label
       )}" data-roll-bonus="${bonus}">${bonus >= 0 ? "+" : ""}${bonus} ${escapeHtml(label)} (${ability})</button>`;
     })
@@ -1576,7 +1412,8 @@ function renderOverview(state) {
     const visibleRows = tableRows.filter((m) => m.showInOverview !== false);
     const rows = visibleRows
       .map((m) => {
-        return `<div class="modifier-row-card">
+        const rowOn = m.enabled !== false;
+        return `<div class="modifier-row-card${rowOn ? " modifier-row-on" : ""}" data-mod-card-id="${m.id}">
           <div class="modifier-row-main">
             <label class="modifier-onoff">
               <input type="checkbox" data-mod-enabled-toggle="${m.id}" ${m.enabled === false ? "" : "checked"} />
@@ -1924,6 +1761,20 @@ function renderOverview(state) {
           const g = draft.base.modifierGroups?.[blockId];
           const row = (g?.rows || []).find((m) => m.id === id);
           if (row) row.enabled = Boolean(el.checked);
+        });
+      });
+    });
+    container.querySelectorAll(".modifier-row-card").forEach((card) => {
+      card.addEventListener("click", (e) => {
+        if (e.target.closest(".modifier-row-actions")) return;
+        if (e.target.closest(".modifier-onoff")) return;
+        const id = card.dataset.modCardId;
+        if (!id) return;
+        store.patch((draft) => {
+          const g = draft.base.modifierGroups?.[blockId];
+          const row = (g?.rows || []).find((m) => m.id === id);
+          if (!row) return;
+          row.enabled = row.enabled === false ? true : false;
         });
       });
     });
@@ -2412,118 +2263,6 @@ function renderOverview(state) {
     });
     const input = document.querySelector("#strip-healing-input");
     if (input) input.value = "";
-  });
-  document.querySelector("#strip-raise-shield")?.addEventListener("change", (event) => {
-    store.patch((draft) => {
-      draft.base.toggles.raiseShield = Boolean(event.currentTarget.checked);
-    });
-  });
-  document.querySelector("#strip-raise-shield-settings-btn")?.addEventListener("click", () => {
-    store.patch((draft) => {
-      draft.ui.shieldSettingsOpen = !draft.ui.shieldSettingsOpen;
-    });
-  });
-  document.querySelectorAll("[data-armor-settings-open]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      store.patch((draft) => {
-        draft.ui.armorSettingsOpen = !draft.ui.armorSettingsOpen;
-      });
-    });
-  });
-  document.querySelector("#armor-settings-close-btn")?.addEventListener("click", () => {
-    store.patch((draft) => {
-      draft.ui.armorSettingsOpen = false;
-    });
-  });
-  document.querySelector("#strip-raise-shield-bonus")?.addEventListener("change", (event) => {
-    store.patch((draft) => {
-      draft.base.toggles.raiseShieldBonus = Math.max(0, Number(event.currentTarget.value || 0));
-    });
-  });
-  document.querySelectorAll("input[data-armor-field],select[data-armor-field]").forEach((el) => {
-    el.addEventListener("change", (event) => {
-      const target = event.currentTarget;
-      const field = target.dataset.armorField;
-      store.patch((draft) => {
-        draft.base.armor = coerceArmorState(draft.base.armor);
-        if (field === "armorType") {
-          draft.base.armorType = String(target.value || "unarmored");
-          return;
-        }
-        if (field === "acBonus" || field === "dexCap" || field === "checkPenalty" || field === "speedPenalty" || field === "strengthRequirement") {
-          draft.base.armor[field] = Number(target.value || 0);
-          return;
-        }
-        if (field === "modifiers") {
-          const formula = String(target.value || "").trim();
-          draft.base.armor.modifiers = formula;
-          if (!formula) {
-            draft.base.armor.modifierValue = 0;
-            return;
-          }
-          try {
-            const vars = resolveVariableMap(store.getState());
-            const resolver = (name) => vars[String(name || "").toLowerCase().replace(/-/g, "_")];
-            const resolved = evaluateExpression(formula, resolver, {
-              resolveTypedSummary: (target) => summarizeModifiers(modifierRowsFlat, target),
-            });
-            const value = Number(Function(`"use strict"; return (${resolved});`)());
-            draft.base.armor.modifierValue = Number.isFinite(value) ? value : 0;
-          } catch (_err) {
-            draft.base.armor.modifierValue = 0;
-          }
-          return;
-        }
-        draft.base.armor[field] = String(target.value || "");
-      });
-    });
-  });
-  document.querySelector("[data-armor-add-bonus]")?.addEventListener("click", () => {
-    store.patch((draft) => {
-      draft.base.armor = coerceArmorState(draft.base.armor);
-      draft.base.armor.bonuses = draft.base.armor.bonuses || [];
-      draft.base.armor.bonuses.push({
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        label: "Armor bonus",
-        bonus: 1,
-        type: "item",
-      });
-    });
-  });
-  document.querySelectorAll("input[data-armor-bonus-id],select[data-armor-bonus-id]").forEach((el) => {
-    el.addEventListener("change", (event) => {
-      const id = el.dataset.armorBonusId;
-      const field = el.dataset.armorBonusField;
-      const target = event.currentTarget;
-      store.patch((draft) => {
-        draft.base.armor = coerceArmorState(draft.base.armor);
-        const row = (draft.base.armor.bonuses || []).find((b) => b.id === id);
-        if (!row) return;
-        if (field === "bonus") {
-          row.bonus = Number(target.value || 0);
-        } else if (field === "type") {
-          const type = String(target.value || "item").toLowerCase();
-          row.type = MODIFIER_TYPES.includes(type) ? type : "item";
-        } else {
-          row[field] = String(target.value || "");
-        }
-      });
-    });
-  });
-  document.querySelectorAll("[data-armor-del-bonus]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.armorDelBonus;
-      store.patch((draft) => {
-        draft.base.armor = coerceArmorState(draft.base.armor);
-        draft.base.armor.bonuses = (draft.base.armor.bonuses || []).filter((b) => b.id !== id);
-      });
-    });
-  });
-  document.querySelector("#armor-settings-popup")?.addEventListener("click", (event) => {
-    if (!event.target.classList.contains("weapon-editor-popup")) return;
-    store.patch((draft) => {
-      draft.ui.armorSettingsOpen = false;
-    });
   });
   bindVariableInsertHandlers(document);
   bindVariableAutocomplete(document, variableTokens);
@@ -3200,6 +2939,31 @@ root.quickRollClose?.addEventListener("click", () => {
   store.patch((draft) => {
     draft.ui.quickRollOpen = false;
   });
+});
+
+document.addEventListener("click", (event) => {
+  const raw = event.target;
+  const el = raw instanceof Element ? raw : raw?.parentElement;
+  if (!el) return;
+  const onRollTrigger = Boolean(
+    el.closest(
+      ".roll-pill, .weapon-roll-btn, [data-cw-roll-id], button[data-roll], button[data-roll-toggle], button[data-roll-all]"
+    )
+  );
+  const inLogPopup = root.rollLogPopup?.contains(el);
+  const onLogToggle = root.rollLogToggle?.contains(el);
+  const inQuickPopup = root.quickRollPopup?.contains(el);
+  const onQuickToggle = root.quickRollToggle?.contains(el);
+  const closeLog = !inLogPopup && !onLogToggle && !onRollTrigger;
+  const closeQuick = !inQuickPopup && !onQuickToggle;
+  if (!closeLog && !closeQuick) return;
+  const s = store.getState();
+  if ((closeLog && s.ui.rollLogOpen) || (closeQuick && s.ui.quickRollOpen)) {
+    store.patch((draft) => {
+      if (closeLog) draft.ui.rollLogOpen = false;
+      if (closeQuick) draft.ui.quickRollOpen = false;
+    });
+  }
 });
 
 root.quickRollD20Btn?.addEventListener("click", () => {

@@ -322,6 +322,21 @@ button:hover {
   display: flex;
   align-items: center;
   gap: 0.55rem;
+  cursor: pointer;
+}
+
+.modifier-row-card.modifier-row-on {
+  background: #2d8f95;
+  border-color: #2d8f95;
+  color: #f4ffff;
+}
+
+.modifier-row-card.modifier-row-on .muted {
+  color: rgba(244, 255, 255, 0.82);
+}
+
+.modifier-row-card.modifier-row-on .modifier-onoff input[type="checkbox"] {
+  accent-color: #e8ffff;
 }
 
 .modifier-row-main {
@@ -356,6 +371,7 @@ button:hover {
   align-items: center;
   gap: 0.35rem;
   flex: 0 0 auto;
+  cursor: default;
 }
 
 .modifier-row-reorder {
@@ -1081,15 +1097,42 @@ button:hover {
   padding: 0.16rem 0.34rem;
 }
 
+#main-skills-strip .skill-roll-pill.skill-favorite {
+  background: #2d8f95;
+  border: 1px solid #2d8f95;
+  color: #f4ffff;
+}
+
+#main-skills-strip .skill-roll-pill.skill-favorite:hover {
+  color: #f4ffff;
+}
+
+#base-panel .skill-favorite-btn {
+  flex: 0 0 auto;
+  min-width: 1.75rem;
+  padding: 0.2rem 0.25rem;
+  font-size: 1rem;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid #3a4654;
+  border-radius: 6px;
+  color: #8a9199;
+  cursor: pointer;
+}
+
+#base-panel .skill-favorite-btn:hover {
+  color: #c9cdd2;
+  border-color: #4f5c6e;
+}
+
+#base-panel .skill-favorite-btn[aria-pressed="true"] {
+  color: #2d8f95;
+  border-color: #2d8f95;
+}
+
 #main-combat-strip .defense-pill-ac {
   font-weight: 700;
   background: #3a3a3a;
-}
-
-#main-combat-strip .defense-pill-ac.shield-active {
-  background: #2d8f95;
-  border-color: #2d8f95;
-  color: #f4ffff;
 }
 
 .strip-inline-settings {
@@ -1352,16 +1395,22 @@ textarea {
 
 .floating-actions {
   position: fixed;
-  right: 1rem;
   bottom: 1rem;
   z-index: 1000;
   display: inline-flex;
   gap: 0.4rem;
 }
 
+.floating-actions-left {
+  left: 1rem;
+}
+
+.floating-actions-right {
+  right: 1rem;
+}
+
 .roll-log-popup {
   position: fixed;
-  right: 1rem;
   bottom: 3.8rem;
   width: min(420px, calc(100vw - 2rem));
   max-height: 55vh;
@@ -1375,11 +1424,18 @@ textarea {
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
 }
 
+#roll-log-popup {
+  right: 1rem;
+  left: auto;
+}
+
 .roll-log-popup.open {
   display: block;
 }
 
 .quick-roll-popup {
+  left: 1rem;
+  right: auto;
   bottom: 7.1rem;
   width: min(320px, calc(100vw - 2rem));
 }
@@ -1389,8 +1445,9 @@ textarea {
 }
 
 .characters-popup {
-  bottom: 3.8rem;
   right: 1rem;
+  left: auto;
+  bottom: 3.8rem;
 }
 
 .roll-log-head {

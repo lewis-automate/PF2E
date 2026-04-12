@@ -138,3 +138,21 @@ export function renderVariablesPanel(container, state, store) {
     });
   });
 }
+
+export function listAvailableVariableTokens(state) {
+  let map = {};
+  try {
+    map = resolveVariableMap(state) || {};
+  } catch (_err) {
+    map = {};
+  }
+  const canonical = new Set(
+    Object.keys(map)
+      .map((k) => String(k || "").trim().toLowerCase().replace(/-/g, "_"))
+      .filter(Boolean)
+  );
+  canonical.add("attack_widget_header_name");
+  return [...canonical]
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => `$${name}`);
+}

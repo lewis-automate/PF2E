@@ -161,3 +161,23 @@ export function selectModifierEffects(modifiers = [], target = "all") {
 
   return picked;
 }
+
+export function flattenModifierRows(base) {
+  const raw =
+    base.modifierGroups && typeof base.modifierGroups === "object"
+      ? Object.values(base.modifierGroups).flatMap((g) => (Array.isArray(g?.rows) ? g.rows : []))
+      : base.modifiers || [];
+  return raw.flatMap((row) => {
+    if (Array.isArray(row?.effectsBatches) && row.effectsBatches.length) {
+      return row.effectsBatches.map((b) => ({
+        enabled: row.enabled !== false && b?.enabled !== false,
+        targets: Array.isArray(b?.targets) ? b.targets : [b?.target || "all"],
+        target: Array.isArray(b?.targets) ? b.targets[0] : b?.target || "all",
+        type: b?.type || "untyped",
+        effect: b?.effect || "0",
+        value: Number(b?.effect || 0),
+      }));
+    }
+    return [row];
+  });
+}

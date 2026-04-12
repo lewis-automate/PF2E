@@ -1,5 +1,9 @@
 import { SKILL_TO_ABILITY, WEAPON_TYPES, ARMOR_TYPES, CLASS_DC_KEY_OPTIONS } from "../engine/calc.js";
-import { MODIFIER_TYPES } from "../engine/modifiers.js";
+import { MODIFIER_TYPES, flattenModifierRows, summarizeModifiers } from "../engine/modifiers.js";
+import { coerceArmorState } from "../engine/armorState.js";
+import { evaluateExpression } from "../engine/formula.js";
+import { resolveVariableMap, listAvailableVariableTokens } from "./variablesPanel.js";
+import { renderVariableAssist, escapeHtml } from "./variableAssist.js";
 
 const PROF_OPTIONS = ["untrained", "trained", "expert", "master", "legendary"];
 const SKILL_KEYS = Object.keys(SKILL_TO_ABILITY);
@@ -37,9 +41,32 @@ export function renderBasePanel(container, state, store) {
     renderProfSelect(base, k, k.replace("weapon_", ""))
   ).join("");
   const armorInputs = ARMOR_KEYS.map((k) => renderProfSelect(base, k, k.replace("armor_", ""))).join("");
+  const armor = coerceArmorState(base.armor);
+  const variableTokens = listAvailableVariableTokens(state);
+  const armorVarAssist = renderVariableAssist("armor-variable-options-base", variableTokens, '#base-panel input[data-armor-field="modifiers"]');
+  const armorBonusRows = (armor.bonuses || [])
+    .map(
+      (b) => `
+        <div class="weapon-bonus-row">
+          <label>Label <input data-armor-bonus-id="${b.id}" data-armor-bonus-field="label" value="${escapeHtml(b.label)}" /></label>
+          <label>Bonus <input data-armor-bonus-id="${b.id}" data-armor-bonus-field="bonus" type="number" value="${Number(b.bonus || 0)}" /></label>
+          <label>Type
+            <select data-armor-bonus-id="${b.id}" data-armor-bonus-field="type">
+              ${MODIFIER_TYPES.map((type) => `<option value="${type}" ${String(b.type || "item") === type ? "selected" : ""}>${type}</option>`).join("")}
+            </select>
+          </label>
+          <button type="button" class="weapon-del-toggle-btn" data-armor-del-bonus="${escapeHtml(b.id)}">Remove</button>
+        </div>
+      `
+    )
+    .join("");
+  const favList = Array.isArray(base.favoriteSkills) ? base.favoriteSkills : [];
+  const isSkillFavorite = (ref) => favList.includes(ref);
   const skillProfInputs = SKILL_KEYS.map((k) => {
     const ability = base.skillAbilityOverrides?.[k] || SKILL_TO_ABILITY[k] || "str";
+    const fav = isSkillFavorite(k);
     return `<div class="row custom-prof-row">
+      <button type="button" class="skill-favorite-btn" data-type="skill-favorite-toggle" data-skill-ref="${k}" aria-pressed="${fav ? "true" : "false"}" title="Favorite">${fav ? "★" : "☆"}</button>
       ${renderProfSelect(base, k, k)}
       <label>ability ${renderAbilitySelect(ability, `data-type="skill-ability" data-key="${k}"`)}</label>
     </div>`;
@@ -68,8 +95,12 @@ export function renderBasePanel(container, state, store) {
 
   const customSkillRows = (custom.skill || [])
     .map(
-      (entry) => `
+      (entry) => {
+        const ref = `custom:${entry.id}`;
+        const fav = isSkillFavorite(ref);
+        return `
       <div class="row custom-prof-row">
+        <button type="button" class="skill-favorite-btn" data-type="skill-favorite-toggle" data-skill-ref="${ref}" aria-pressed="${fav ? "true" : "false"}" title="Favorite">${fav ? "★" : "☆"}</button>
         <input data-type="custom-prof-name" data-category="skill" data-id="${entry.id}" value="${entry.name || ""}" placeholder="name" />
         <select data-type="custom-prof-rank" data-category="skill" data-id="${entry.id}">
           ${PROF_OPTIONS.map((o) => `<option value="${o}" ${(entry.rank || "untrained") === o ? "selected" : ""}>${o}</option>`).join("")}
@@ -77,7 +108,8 @@ export function renderBasePanel(container, state, store) {
         <label>ability ${renderAbilitySelect(base.customSkillAbilities?.[entry.id] || "str", `data-type="custom-skill-ability" data-id="${entry.id}"`)}</label>
         <button type="button" data-type="custom-prof-del" data-category="skill" data-id="${entry.id}">X</button>
       </div>
-    `
+    `;
+      }
     )
     .join("");
 
@@ -142,8 +174,46 @@ export function renderBasePanel(container, state, store) {
       <div class="row">${weaponInputs}</div>
       </div>
       <div class="prof-box">
-      <p class="section-header">Armor Proficiencies</p>
+      <p class="section-header">Armor</p>
+      <p class="muted">Proficiencies</p>
       <div class="row">${armorInputs}</div>
+      <hr class="section-divider" />
+      <p class="section-header">Equipped armor</p>
+      <div class="weapon-editor-grid">
+        <label>Name <input data-armor-field="name" value="${escapeHtml(armor.name)}" /></label>
+        <label>Category (proficiency)
+          <select data-armor-field="armorType">
+            <option value="unarmored" ${String(base.armorType || "unarmored") === "unarmored" ? "selected" : ""}>Unarmored</option>
+            <option value="light" ${base.armorType === "light" ? "selected" : ""}>Light Armor</option>
+            <option value="medium" ${base.armorType === "medium" ? "selected" : ""}>Medium Armor</option>
+            <option value="heavy" ${base.armorType === "heavy" ? "selected" : ""}>Heavy Armor</option>
+          </select>
+        </label>
+        <label>Group <input data-armor-field="group" value="${escapeHtml(armor.group)}" /></label>
+        <label>Bulk <input data-armor-field="bulk" value="${escapeHtml(armor.bulk)}" /></label>
+        <label>AC bonus <input data-armor-field="acBonus" type="number" step="1" value="${armor.acBonus}" /></label>
+        <label>Dex cap <input data-armor-field="dexCap" type="number" step="1" value="${armor.dexCap}" /></label>
+        <label>Check penalty <input data-armor-field="checkPenalty" type="number" step="1" value="${armor.checkPenalty}" /></label>
+        <label>Speed penalty <input data-armor-field="speedPenalty" type="number" step="1" value="${armor.speedPenalty}" /></label>
+      </div>
+      <div class="row">
+        <label>Strength requirement <input data-armor-field="strengthRequirement" type="number" step="1" value="${armor.strengthRequirement}" /></label>
+      </div>
+      <hr class="section-divider" />
+      <p class="section-header">Always-on armor bonuses</p>
+      ${armorBonusRows || `<p class="muted">No armor bonuses yet.</p>`}
+      <div class="row"><button type="button" data-armor-add-bonus>Add armor bonus</button></div>
+      <div class="row">
+        <label>Enchantments <input data-armor-field="enchantments" value="${escapeHtml(armor.enchantments)}" /></label>
+      </div>
+      <div class="row">
+        <label>Modifiers (supports $variables)
+          <input data-armor-field="modifiers" ${armorVarAssist.listAttr} value="${escapeHtml(armor.modifiers)}" placeholder="$level-1" />
+        </label>
+      </div>
+      ${armorVarAssist.hintHtml}
+      ${armorVarAssist.datalistHtml}
+      <p class="muted">Resolved modifier: ${Number(armor.modifierValue || 0) >= 0 ? "+" : ""}${Number(armor.modifierValue || 0)}</p>
       </div>
       <div class="prof-box">
       <p class="section-header">Saves</p>
@@ -230,11 +300,18 @@ export function renderBasePanel(container, state, store) {
     });
   });
 
-  container.querySelectorAll("button[data-type='custom-prof-add'],button[data-type='custom-prof-del'],button[data-type='speed-add'],button[data-type='speed-del']").forEach((btn) => {
+  container.querySelectorAll("button[data-type='custom-prof-add'],button[data-type='custom-prof-del'],button[data-type='speed-add'],button[data-type='speed-del'],button[data-type='skill-favorite-toggle']").forEach((btn) => {
     btn.addEventListener("click", (event) => {
       const target = event.currentTarget;
       store.patch((draft) => {
-        if (target.dataset.type === "custom-prof-add") {
+        if (target.dataset.type === "skill-favorite-toggle") {
+          const ref = String(target.dataset.skillRef || "");
+          if (!ref) return;
+          draft.base.favoriteSkills = Array.isArray(draft.base.favoriteSkills) ? [...draft.base.favoriteSkills] : [];
+          const idx = draft.base.favoriteSkills.indexOf(ref);
+          if (idx >= 0) draft.base.favoriteSkills.splice(idx, 1);
+          else draft.base.favoriteSkills.push(ref);
+        } else if (target.dataset.type === "custom-prof-add") {
           const category = target.dataset.category;
           draft.base.customProficiencies = draft.base.customProficiencies || { core: [], skill: [] };
           draft.base.customProficiencies[category].push({
@@ -261,6 +338,87 @@ export function renderBasePanel(container, state, store) {
           const id = target.dataset.id;
           draft.base.speedChanges = (draft.base.speedChanges || []).filter((row) => row.id !== id);
         }
+      });
+    });
+  });
+
+  container.querySelectorAll("input[data-armor-field],select[data-armor-field]").forEach((el) => {
+    el.addEventListener("change", (event) => {
+      const target = event.currentTarget;
+      const field = target.dataset.armorField;
+      store.patch((draft) => {
+        draft.base.armor = coerceArmorState(draft.base.armor);
+        if (field === "armorType") {
+          draft.base.armorType = String(target.value || "unarmored");
+          return;
+        }
+        if (field === "acBonus" || field === "dexCap" || field === "checkPenalty" || field === "speedPenalty" || field === "strengthRequirement") {
+          draft.base.armor[field] = Number(target.value || 0);
+          return;
+        }
+        if (field === "modifiers") {
+          const formula = String(target.value || "").trim();
+          draft.base.armor.modifiers = formula;
+          if (!formula) {
+            draft.base.armor.modifierValue = 0;
+            return;
+          }
+          try {
+            const vars = resolveVariableMap(store.getState());
+            const resolver = (name) => vars[String(name || "").toLowerCase().replace(/-/g, "_")];
+            const modifierRowsFlat = flattenModifierRows(draft.base);
+            const resolved = evaluateExpression(formula, resolver, {
+              resolveTypedSummary: (t) => summarizeModifiers(modifierRowsFlat, t),
+            });
+            const value = Number(Function(`"use strict"; return (${resolved});`)());
+            draft.base.armor.modifierValue = Number.isFinite(value) ? value : 0;
+          } catch (_err) {
+            draft.base.armor.modifierValue = 0;
+          }
+          return;
+        }
+        draft.base.armor[field] = String(target.value || "");
+      });
+    });
+  });
+  container.querySelector("[data-armor-add-bonus]")?.addEventListener("click", () => {
+    store.patch((draft) => {
+      draft.base.armor = coerceArmorState(draft.base.armor);
+      draft.base.armor.bonuses = draft.base.armor.bonuses || [];
+      draft.base.armor.bonuses.push({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        label: "Armor bonus",
+        bonus: 1,
+        type: "item",
+      });
+    });
+  });
+  container.querySelectorAll("input[data-armor-bonus-id],select[data-armor-bonus-id]").forEach((el) => {
+    el.addEventListener("change", (event) => {
+      const id = el.dataset.armorBonusId;
+      const field = el.dataset.armorBonusField;
+      const target = event.currentTarget;
+      store.patch((draft) => {
+        draft.base.armor = coerceArmorState(draft.base.armor);
+        const row = (draft.base.armor.bonuses || []).find((b) => b.id === id);
+        if (!row) return;
+        if (field === "bonus") {
+          row.bonus = Number(target.value || 0);
+        } else if (field === "type") {
+          const type = String(target.value || "item").toLowerCase();
+          row.type = MODIFIER_TYPES.includes(type) ? type : "item";
+        } else {
+          row[field] = String(target.value || "");
+        }
+      });
+    });
+  });
+  container.querySelectorAll("[data-armor-del-bonus]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.armorDelBonus;
+      store.patch((draft) => {
+        draft.base.armor = coerceArmorState(draft.base.armor);
+        draft.base.armor.bonuses = (draft.base.armor.bonuses || []).filter((b) => b.id !== id);
       });
     });
   });

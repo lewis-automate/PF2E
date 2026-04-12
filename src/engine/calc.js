@@ -111,8 +111,7 @@ export function calculateDerived(base) {
       rankBonus.ac +
       Number(base.bonuses.acItem || 0) +
       armorAcBonus +
-      armorModifierValue +
-      Number(base.toggles?.raiseShield ? Number(base.toggles?.raiseShieldBonus || 1) : 0),
+      armorModifierValue,
     fortitude:
       10 + mods.con + level + rankBonus.fortitude + Number(base.bonuses.fortitudeItem || 0),
     reflex: 10 + mods.dex + level + rankBonus.reflex + Number(base.bonuses.reflexItem || 0),
